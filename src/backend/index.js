@@ -119,6 +119,7 @@ async function loadAllIssues(searchJql, fieldsToRequest, maxPages = 25) {
 
 resolver.define('loadGadgetData', async ({ payload }) => {
   const searchJql = payload?.searchJql;
+  const historicalJql = payload?.historicalJql;
   const windowStart = payload?.windowStart;
   const windowEnd = payload?.windowEnd;
 
@@ -169,9 +170,11 @@ resolver.define('loadGadgetData', async ({ payload }) => {
   }
 
   const visibleWindowJql = buildWindowScopedJql(searchJql, windowStart, windowEnd);
+  const historicalQuery = (historicalJql ?? '').trim();
 
   return {
     issues: await loadAllIssues(searchJql, ['created', 'assignee'], 25),
+    historicalIssues: historicalQuery ? await loadAllIssues(historicalQuery, ['created'], 10) : [],
     visibleIssues: await loadAllIssues(visibleWindowJql, fieldsToRequest, 10),
     namesMap,
   };

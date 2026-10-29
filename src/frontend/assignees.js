@@ -32,5 +32,8 @@ export function toAssigneeCounts(issues) {
     counts.set(key, entry);
   }
 
-  return [...counts.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  // Unassigned always comes first, then the people with the most tickets.
+  return [...counts.values()].sort(
+    (a, b) => Number(b.unassigned) - Number(a.unassigned) || b.count - a.count || a.label.localeCompare(b.label)
+  );
 }

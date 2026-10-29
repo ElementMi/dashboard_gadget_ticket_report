@@ -5,9 +5,12 @@ import { invoke } from '@forge/bridge';
 import {
   DEFAULT_JQL,
   buildSearchJql,
+  buildHistoricalHistogramFromPreviousYear,
+  buildStaticTimelineJql,
   formatJqlDate,
   getWindowForTimeframe,
   intervalOptions,
+  shiftDateByYears,
   timeframeOptions,
   toTimeHistogram,
 } from './time.js';
@@ -16,7 +19,7 @@ import { levelFor, toAssigneeCounts } from './assignees.js';
 
 const ROWS_PER_PAGE = 10;
 
-function ChartPanel({ histogram, interval }) {
+function ChartPanel({ histogram, historicalHistogram, interval }) {
   const containerRef = useRef(null);
 
   useEffect(() => {
@@ -28,7 +31,7 @@ function ChartPanel({ histogram, interval }) {
       animation: false,
       title: {
         text: 'Tickets over time',
-        subtext: 'green bar diagram = tickets of timeline chosen',
+        subtext: 'green bar diagram = tickets of timeline chosen / gray bar diagram = tickets same time last year',
         textStyle: { fontSize: 13, fontWeight: 700, color: '#5e6c84' },
         subtextStyle: { fontSize: 12, color: '#42526e' },
       },
@@ -50,15 +53,26 @@ function ChartPanel({ histogram, interval }) {
       yAxis: { type: 'value', name: 'Tickets', minInterval: 1 },
       series: [
         {
+          name: 'Tickets (last year)',
+          type: 'bar',
+          data: (historicalHistogram ?? []).map((d) => d.tickets),
+          barGap: '-100%',
+          barWidth: '55%',
+          itemStyle: { color: '#97A0AF' },
+          z: 1,
+          emphasis: { focus: 'series' },
+        },
+        {
           name: 'Tickets',
           type: 'bar',
           data: histogram.map((d) => d.tickets),
           barWidth: '55%',
           itemStyle: { color: 'rgba(168, 230, 207, 0.6)' },
+          z: 2,
           emphasis: { focus: 'series' },
         },
       ],
-      legend: { data: ['Tickets'], bottom: 0 },
+      legend: { data: ['Tickets', 'Tickets (last year)'], bottom: 0 },
     });
 
     const onResize = () => chart.resize();
@@ -68,7 +82,7 @@ function ChartPanel({ histogram, interval }) {
       window.removeEventListener('resize', onResize);
       chart.dispose();
     };
-  }, [histogram, interval]);
+  }, [histogram, historicalHistogram, interval]);
 
   return <div ref={containerRef} className="chart" />;
 }
@@ -102,18 +116,32 @@ function App() {
         const window = getWindowForTimeframe(timeframeDays);
         const searchJql = buildSearchJql(appliedJql);
 
-        const { issues = [], visibleIssues = [], namesMap = {} } = await invoke('loadGadgetData', {
+        const historicalWindow = {
+          start: shiftDateByYears(window.start, -1),
+          end: shiftDateByYears(window.end, -1),
+        };
+
+        const { issues = [], historicalIssues = [], visibleIssues = [], namesMap = {} } = await invoke('loadGadgetData', {
           searchJql,
+          historicalJql: buildStaticTimelineJql(searchJql, historicalWindow),
           windowStart: formatJqlDate(window.start),
           windowEnd: formatJqlDate(window.end),
         });
 
         const histogram = toTimeHistogram(issues, interval, window);
+        const historical = buildHistoricalHistogramFromPreviousYear(historicalIssues, interval, window);
         const tickets = toVisibleIssuesWithNames(visibleIssues, window, namesMap);
         const total = histogram.reduce((sum, bucket) => sum + bucket.tickets, 0);
 
         if (!mounted) return;
-        setData({ total, histogram, tickets, assignees: toAssigneeCounts(issues) });
+        setData({
+          total,
+          histogram,
+          historicalHistogram: historical.histogram,
+          historicalIssueCount: historicalIssues.length,
+          tickets,
+          assignees: toAssigneeCounts(issues),
+        });
       } catch (e) {
         if (!mounted) return;
         setError(e?.message ?? 'Unexpected error while loading gadget data.');
@@ -224,14 +252,17 @@ function App() {
 
       <div className="panel">
         {data?.histogram?.length ? (
-          <ChartPanel histogram={data.histogram} interval={interval} />
+          <>
+            <ChartPanel histogram={data.histogram} historicalHistogram={data.historicalHistogram} interval={interval} />
+            <div className="small">Gray bars show the same timeframe from one year earlier, using the same JQL. | Historical rows: {data.historicalIssueCount}</div>
+          </>
         ) : (
           <div className="small">No issues were found for the selected timeframe and bucket settings.</div>
         )}
       </div>
 
       <div className="panel">
-        <div className="meta kpi-heading"><strong>Tickets per Assignee</strong></div>
+        <div className="meta section-heading"><strong>Tickets per Assignee</strong></div>
         {data?.assignees?.length ? (
           <div className="assignee-grid">
             {data.assignees.map((entry) => (
