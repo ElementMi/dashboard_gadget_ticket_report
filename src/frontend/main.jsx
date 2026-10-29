@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import * as echarts from 'echarts';
 import { invoke } from '@forge/bridge';
@@ -48,6 +48,9 @@ function ChartPanel({ histogram, historicalHistogram, interval }) {
         axisLabel: {
           interval: interval === 'hour' ? 'auto' : 0,
           rotate: interval === 'hour' ? 45 : 0,
+          // Saturday and Sunday labels are bold.
+          formatter: (value, index) => (histogram[index]?.isWeekend ? `{weekend|${value}}` : value),
+          rich: { weekend: { fontWeight: 'bold', color: '#172b4d' } },
         },
       },
       yAxis: { type: 'value', name: 'Tickets', minInterval: 1 },
@@ -88,7 +91,7 @@ function ChartPanel({ histogram, historicalHistogram, interval }) {
 }
 
 function App() {
-  const [timeframeDays, setTimeframeDays] = useState(28);
+  const [timeframe, setTimeframe] = useState('month');
   const [jqlInput, setJqlInput] = useState(DEFAULT_JQL);
   const [appliedJql, setAppliedJql] = useState(DEFAULT_JQL);
   const [interval, setInterval] = useState('day');
@@ -98,10 +101,6 @@ function App() {
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
   const hasLoadedOnceRef = useRef(false);
-  const availableIntervalOptions = useMemo(
-    () => (timeframeDays === 7 ? intervalOptions.filter((option) => option.value !== 'week') : intervalOptions),
-    [timeframeDays]
-  );
 
   useEffect(() => {
     let mounted = true;
@@ -113,7 +112,7 @@ function App() {
       setError('');
 
       try {
-        const window = getWindowForTimeframe(timeframeDays);
+        const window = getWindowForTimeframe(timeframe);
         const searchJql = buildSearchJql(appliedJql);
 
         const historicalWindow = {
@@ -162,7 +161,7 @@ function App() {
     return () => {
       mounted = false;
     };
-  }, [timeframeDays, interval, appliedJql]);
+  }, [timeframe, interval, appliedJql]);
 
   const totalTickets = data?.tickets?.length ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalTickets / ROWS_PER_PAGE));
@@ -173,7 +172,7 @@ function App() {
 
   useEffect(() => {
     setTablePage(1);
-  }, [appliedJql, timeframeDays, interval]);
+  }, [appliedJql, timeframe, interval]);
 
   useEffect(() => {
     if (tablePage > totalPages) {
@@ -219,13 +218,9 @@ function App() {
             <label htmlFor="timeline">Timeline</label>
             <select
               id="timeline"
-              value={timeframeDays}
+              value={timeframe}
               disabled={isUpdating}
-              onChange={(event) => {
-                const nextDays = Number(event.target.value);
-                setTimeframeDays(nextDays);
-                if (nextDays === 7 && interval === 'week') setInterval('day');
-              }}
+              onChange={(event) => setTimeframe(event.target.value)}
             >
               {timeframeOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -238,7 +233,7 @@ function App() {
           <div className="block">
             <label htmlFor="bucket">Bar-size</label>
             <select id="bucket" value={interval} disabled={isUpdating} onChange={(event) => setInterval(event.target.value)}>
-              {availableIntervalOptions.map((option) => (
+              {intervalOptions.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>

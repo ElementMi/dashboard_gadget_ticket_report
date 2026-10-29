@@ -2,8 +2,8 @@ export const DEFAULT_JQL =
   'project = CFG AND status NOT IN (Closed, Resolved) ORDER BY created DESC, "impact (migrated 2)[dropdown]" ASC';
 
 export const timeframeOptions = [
-  { label: 'Last 7 days', value: 7 },
-  { label: 'Last 28 days', value: 28 },
+  { label: 'This month', value: 'month' },
+  { label: 'Last month', value: 'lastMonth' },
 ];
 
 export const intervalOptions = [
@@ -113,7 +113,27 @@ export function getBerlinFourWeekWindow(now = new Date()) {
   };
 }
 
+// Whole calendar month in Berlin time: from 00:00 on the 1st up to 00:00 on the 1st of the next month.
+export function getBerlinMonthWindow(monthOffset = 0, now = new Date()) {
+  const berlinNow = getTzParts(now, BERLIN_TIMEZONE);
+  const startOfMonth = (month) =>
+    zonedDateTimeToUtcDate({ year: berlinNow.year, month, day: 1, hour: 0, minute: 0, second: 0 }, BERLIN_TIMEZONE);
+
+  return {
+    start: startOfMonth(berlinNow.month + monthOffset),
+    end: startOfMonth(berlinNow.month + monthOffset + 1),
+  };
+}
+
 export function getWindowForTimeframe(timeframeDays) {
+  if (timeframeDays === 'month') {
+    return getBerlinMonthWindow(0);
+  }
+
+  if (timeframeDays === 'lastMonth') {
+    return getBerlinMonthWindow(-1);
+  }
+
   if (timeframeDays === 7) {
     return getBerlinWeekWindow();
   }
@@ -139,18 +159,41 @@ export function formatBucketLabel(date, interval) {
   return `Wk ${dateOnlyFormatter.format(date)}`;
 }
 
-export function toTimeHistogram(issues, interval, window) {
-  const stepMs = getBucketStepMs(interval);
+function getBucketStarts(interval, window) {
   const rawStartMs = window.start.getTime();
   const rawEndMs = window.end.getTime();
 
   // Hourly buckets are aligned to exact hour boundaries for stable chart labels.
-  const startMs = interval === 'hour' ? Math.floor(rawStartMs / MS_PER_HOUR) * MS_PER_HOUR : rawStartMs;
-  const endMs = interval === 'hour' ? Math.ceil(rawEndMs / MS_PER_HOUR) * MS_PER_HOUR : rawEndMs;
-  const bucketCount = Math.max(1, Math.ceil((endMs - startMs) / stepMs));
+  if (interval === 'hour') {
+    const startMs = Math.floor(rawStartMs / MS_PER_HOUR) * MS_PER_HOUR;
+    const endMs = Math.ceil(rawEndMs / MS_PER_HOUR) * MS_PER_HOUR;
+    const bucketCount = Math.max(1, Math.ceil((endMs - startMs) / MS_PER_HOUR));
+    return Array.from({ length: bucketCount }, (_, index) => startMs + index * MS_PER_HOUR);
+  }
 
-  const bins = Array.from({ length: bucketCount }, (_, index) => {
-    const bucketStart = new Date(startMs + index * stepMs);
+  // Day and week buckets step in Berlin wall-clock days, so a clock change inside the window does not shift the labels.
+  const daysPerBucket = interval === 'week' ? 7 : 1;
+  const startParts = getTzParts(window.start, BERLIN_TIMEZONE);
+  const starts = [];
+
+  for (let index = 0; ; index += 1) {
+    const bucketStartMs = zonedDateTimeToUtcDate(
+      { ...startParts, day: startParts.day + index * daysPerBucket },
+      BERLIN_TIMEZONE
+    ).getTime();
+
+    if (index > 0 && bucketStartMs >= rawEndMs) break;
+    starts.push(bucketStartMs);
+  }
+
+  return starts;
+}
+
+export function toTimeHistogram(issues, interval, window) {
+  const starts = getBucketStarts(interval, window);
+
+  const bins = starts.map((startMs, index) => {
+    const bucketStart = new Date(startMs);
 
     return {
       xKey: `${bucketStart.toISOString()}_${index}`,
@@ -168,8 +211,9 @@ export function toTimeHistogram(issues, interval, window) {
     if (Number.isNaN(createdDate.getTime())) continue;
     if (createdDate < window.start || createdDate >= window.end) continue;
 
-    const diff = createdDate.getTime() - startMs;
-    const bucketIndex = Math.floor(diff / stepMs);
+    const createdMs = createdDate.getTime();
+    let bucketIndex = -1;
+    for (let i = 0; i < starts.length && starts[i] <= createdMs; i += 1) bucketIndex = i;
 
     if (bucketIndex >= 0 && bucketIndex < bins.length) {
       bins[bucketIndex].tickets += 1;
@@ -183,6 +227,7 @@ export function toTimeHistogram(issues, interval, window) {
       period: bin.period,
       tickets: bin.tickets,
       series: 'Tickets',
+      isWeekend: interval !== 'week' && ['Sat', 'Sun'].includes(getTzParts(new Date(bin.sortKey), BERLIN_TIMEZONE).weekday),
     }));
 }
 
