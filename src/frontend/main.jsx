@@ -12,7 +12,7 @@ import {
   toTimeHistogram,
 } from './time.js';
 import { toVisibleIssuesWithNames } from './tickets.js';
-import { toAssigneeCounts } from './assignees.js';
+import { levelFor, toAssigneeCounts } from './assignees.js';
 
 const ROWS_PER_PAGE = 10;
 
@@ -235,7 +235,7 @@ function App() {
         {data?.assignees?.length ? (
           <div className="assignee-grid">
             {data.assignees.map((entry) => (
-              <div key={entry.key} className={`assignee-card${entry.unassigned ? ' unassigned' : ''}`}>
+              <div key={entry.key} className={`assignee-card ${levelFor(entry.count, entry.unassigned)}`}>
                 <div className="name" title={entry.label}>{entry.label}</div>
                 <div className="count">{entry.count}</div>
               </div>
