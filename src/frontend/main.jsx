@@ -12,6 +12,7 @@ import {
   toTimeHistogram,
 } from './time.js';
 import { toVisibleIssuesWithNames } from './tickets.js';
+import { toAssigneeCounts } from './assignees.js';
 
 const ROWS_PER_PAGE = 10;
 
@@ -112,7 +113,7 @@ function App() {
         const total = histogram.reduce((sum, bucket) => sum + bucket.tickets, 0);
 
         if (!mounted) return;
-        setData({ total, histogram, tickets });
+        setData({ total, histogram, tickets, assignees: toAssigneeCounts(issues) });
       } catch (e) {
         if (!mounted) return;
         setError(e?.message ?? 'Unexpected error while loading gadget data.');
@@ -230,8 +231,19 @@ function App() {
       </div>
 
       <div className="panel">
-        <div className="meta kpi-heading"><strong>KPI Summary</strong></div>
-        <div className="small">KPIs coming soon.</div>
+        <div className="meta kpi-heading"><strong>Tickets per Assignee</strong></div>
+        {data?.assignees?.length ? (
+          <div className="assignee-grid">
+            {data.assignees.map((entry) => (
+              <div key={entry.key} className={`assignee-card${entry.unassigned ? ' unassigned' : ''}`}>
+                <div className="name" title={entry.label}>{entry.label}</div>
+                <div className="count">{entry.count}</div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="small">No tickets for the current JQL.</div>
+        )}
       </div>
 
       <div className="panel">

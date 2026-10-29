@@ -171,7 +171,7 @@ resolver.define('loadGadgetData', async ({ payload }) => {
   const visibleWindowJql = buildWindowScopedJql(searchJql, windowStart, windowEnd);
 
   return {
-    issues: await loadAllIssues(searchJql, ['created'], 25),
+    issues: await loadAllIssues(searchJql, ['created', 'assignee'], 25),
     visibleIssues: await loadAllIssues(visibleWindowJql, fieldsToRequest, 10),
     namesMap,
   };
