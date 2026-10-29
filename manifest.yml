@@ -1,0 +1,23 @@
+modules:
+  jira:dashboardGadget:
+    - key: element-cfg-gadget
+      title: Element CFG Gadget
+      description: Dashboard gadget (CFG)
+      resource: main
+      resolver:
+        function: gadget-resolver
+      thumbnail: https://developer.atlassian.com/platform/forge/images/icons/issue-panel-icon.svg
+      refreshable: true
+  function:
+    - key: gadget-resolver
+      handler: backend/index.handler
+resources:
+  - key: main
+    path: dist/frontend
+permissions:
+  scopes:
+    - read:jira-work
+app:
+  runtime:
+    name: nodejs22.x
+  id: ari:cloud:ecosystem::app/539fb103-9980-4401-8bdc-bd210b367170
