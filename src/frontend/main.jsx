@@ -5,21 +5,51 @@ import { invoke } from '@forge/bridge';
 import {
   DEFAULT_JQL,
   buildSearchJql,
-  buildHistoricalHistogramFromPreviousYear,
-  buildStaticTimelineJql,
   formatJqlDate,
   getWindowForTimeframe,
-  intervalOptions,
-  shiftDateByYears,
   timeframeOptions,
   toTimeHistogram,
 } from './time.js';
 import { toVisibleIssuesWithNames } from './tickets.js';
-import { levelFor, toAssigneeCounts } from './assignees.js';
+import {
+  TOTAL_LINE_COLOR,
+  UNASSIGNED_LINE_COLOR,
+  levelFor,
+  lineColorForRank,
+  toAssigneeCounts,
+} from './assignees.js';
 
 const ROWS_PER_PAGE = 10;
 
-function ChartPanel({ histogram, historicalHistogram, interval }) {
+// Stretched y axis: 0-10 tickets at 6x size, 10-30 at 3x, 30-60 at half, above 60 at a quarter.
+const Y_SEGMENTS = [
+  { from: 0, to: 10, weight: 6 },
+  { from: 10, to: 30, weight: 3 },
+  { from: 30, to: 60, weight: 0.5 },
+  { from: 60, to: Infinity, weight: 0.25 },
+];
+const Y_TICKS = [0, 5, 10, 15, 20, 25, 30, 40, 50, 60, 80, 100, 120, 150, 200, 300];
+
+function stretchY(value) {
+  let position = 0;
+  for (const segment of Y_SEGMENTS) {
+    if (value <= segment.from) break;
+    position += (Math.min(value, segment.to) - segment.from) * segment.weight;
+  }
+  return position;
+}
+
+// Ticks up to and including the first one above the highest value.
+function pickYTicks(maxValue) {
+  const ticks = [];
+  for (const tick of Y_TICKS) {
+    ticks.push(tick);
+    if (tick >= maxValue) return ticks;
+  }
+  return [...ticks, Math.ceil(maxValue / 100) * 100];
+}
+
+function ChartPanel({ histogram, lines }) {
   const containerRef = useRef(null);
 
   useEffect(() => {
@@ -27,11 +57,15 @@ function ChartPanel({ histogram, historicalHistogram, interval }) {
 
     const chart = echarts.init(containerRef.current, null, { renderer: 'canvas' });
 
+    const maxValue = Math.max(1, ...lines.flatMap((line) => line.values.filter((v) => v != null)));
+    const yTicks = pickYTicks(maxValue);
+    const labelFor = (position) => yTicks.find((tick) => Math.abs(stretchY(tick) - position) < 1e-6) ?? '';
+
     chart.setOption({
       animation: false,
       title: {
-        text: 'Tickets over time',
-        subtext: 'green bar diagram = tickets of timeline chosen / gray bar diagram = tickets same time last year',
+        text: 'Open tickets per person',
+        subtext: 'one line per assignee = open tickets at the end of each day / red line = all tickets combined / y axis: low numbers stretched, high numbers compressed',
         textStyle: { fontSize: 13, fontWeight: 700, color: '#5e6c84' },
         subtextStyle: { fontSize: 12, color: '#42526e' },
       },
@@ -39,43 +73,69 @@ function ChartPanel({ histogram, historicalHistogram, interval }) {
         top: 70,
         left: 42,
         right: 14,
-        bottom: interval === 'hour' ? 72 : 46,
+        bottom: 60,
       },
-      tooltip: { trigger: 'axis' },
+      // The points carry their real ticket count; the stretched position is only for drawing.
+      tooltip: {
+        trigger: 'axis',
+        formatter: (params) => {
+          const rows = params
+            .filter((p) => p.data?.real != null)
+            .sort((a, b) => b.data.real - a.data.real)
+            .map((p) => `${p.marker} ${p.seriesName}: <b>${p.data.real}</b>`);
+          return [params[0]?.axisValue, ...rows].join('<br/>');
+        },
+      },
       xAxis: {
         type: 'category',
         data: histogram.map((d) => d.period),
         axisLabel: {
-          interval: interval === 'hour' ? 'auto' : 0,
-          rotate: interval === 'hour' ? 45 : 0,
+          interval: 0,
           // Saturday and Sunday labels are bold.
           formatter: (value, index) => (histogram[index]?.isWeekend ? `{weekend|${value}}` : value),
           rich: { weekend: { fontWeight: 'bold', color: '#172b4d' } },
         },
       },
-      yAxis: { type: 'value', name: 'Tickets', minInterval: 1 },
+      yAxis: {
+        type: 'value',
+        name: 'Tickets',
+        min: 0,
+        max: stretchY(yTicks[yTicks.length - 1]),
+        splitLine: { show: false },
+        axisTick: { customValues: yTicks.map(stretchY) },
+        axisLabel: {
+          customValues: yTicks.map(stretchY),
+          formatter: labelFor,
+        },
+      },
       series: [
+        // Helper series that only draws the grid lines at the real tick positions.
         {
-          name: 'Tickets (last year)',
-          type: 'bar',
-          data: (historicalHistogram ?? []).map((d) => d.tickets),
-          barGap: '-100%',
-          barWidth: '55%',
-          itemStyle: { color: '#97A0AF' },
-          z: 1,
-          emphasis: { focus: 'series' },
+          type: 'line',
+          data: [],
+          silent: true,
+          z: 0,
+          markLine: {
+            silent: true,
+            symbol: 'none',
+            label: { show: false },
+            lineStyle: { color: '#EBECF0', type: 'solid', width: 1 },
+            data: yTicks.map((tick) => ({ yAxis: stretchY(tick) })),
+          },
         },
-        {
-          name: 'Tickets',
-          type: 'bar',
-          data: histogram.map((d) => d.tickets),
-          barWidth: '55%',
-          itemStyle: { color: 'rgba(168, 230, 207, 0.6)' },
-          z: 2,
-          emphasis: { focus: 'series' },
-        },
+        ...lines.map((line) => ({
+          name: line.name,
+          type: 'line',
+          data: line.values.map((v) => (v == null ? null : { value: stretchY(v), real: v })),
+          showSymbol: true,
+          symbolSize: 7,
+          lineStyle: { width: line.total ? 4 : 3, color: line.color },
+          itemStyle: { color: line.color, borderColor: '#FFFFFF', borderWidth: 1 },
+          z: line.total ? 10 : 2,
+          emphasis: { focus: 'series', lineStyle: { width: line.total ? 5 : 4 } },
+        })),
       ],
-      legend: { data: ['Tickets', 'Tickets (last year)'], bottom: 0 },
+      legend: { data: lines.map((line) => line.name), bottom: 0, type: 'scroll' },
     });
 
     const onResize = () => chart.resize();
@@ -85,7 +145,7 @@ function ChartPanel({ histogram, historicalHistogram, interval }) {
       window.removeEventListener('resize', onResize);
       chart.dispose();
     };
-  }, [histogram, historicalHistogram, interval]);
+  }, [histogram, lines]);
 
   return <div ref={containerRef} className="chart" />;
 }
@@ -94,7 +154,6 @@ function App() {
   const [timeframe, setTimeframe] = useState('month');
   const [jqlInput, setJqlInput] = useState(DEFAULT_JQL);
   const [appliedJql, setAppliedJql] = useState(DEFAULT_JQL);
-  const [interval, setInterval] = useState('day');
   const [tablePage, setTablePage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -115,31 +174,67 @@ function App() {
         const window = getWindowForTimeframe(timeframe);
         const searchJql = buildSearchJql(appliedJql);
 
-        const historicalWindow = {
-          start: shiftDateByYears(window.start, -1),
-          end: shiftDateByYears(window.end, -1),
-        };
-
-        const { issues = [], historicalIssues = [], visibleIssues = [], namesMap = {} } = await invoke('loadGadgetData', {
+        const {
+          issues = [],
+          visibleIssues = [],
+          namesMap = {},
+          people = [],
+          dailyCounts = [],
+          todayKey = '',
+        } = await invoke('loadGadgetData', {
           searchJql,
-          historicalJql: buildStaticTimelineJql(searchJql, historicalWindow),
           windowStart: formatJqlDate(window.start),
           windowEnd: formatJqlDate(window.end),
         });
 
-        const histogram = toTimeHistogram(issues, interval, window);
-        const historical = buildHistoricalHistogramFromPreviousYear(historicalIssues, interval, window);
+        const histogram = toTimeHistogram([], 'day', window);
         const tickets = toVisibleIssuesWithNames(visibleIssues, window, namesMap);
-        const total = histogram.reduce((sum, bucket) => sum + bucket.tickets, 0);
+
+        // Past days come from the backend's daily counts, today from the open tickets, days after today stay empty.
+        const countsByPersonDay = new Map(dailyCounts.map((c) => [`${c.accountId}|${c.day}`, c.count]));
+        // Named people ranked by open tickets today, same order as the assignee boxes.
+        const rankByAccountId = new Map(
+          people
+            .filter((p) => p.accountId)
+            .sort((a, b) => b.openToday - a.openToday || a.displayName.localeCompare(b.displayName))
+            .map((person, rank) => [person.accountId, rank])
+        );
+        const personLines = people
+          .map((person) => ({
+            key: person.accountId ?? 'Unassigned',
+            name: person.displayName,
+            unassigned: !person.accountId,
+            count: person.openToday,
+            color: person.accountId ? lineColorForRank(rankByAccountId.get(person.accountId)) : UNASSIGNED_LINE_COLOR,
+            values: histogram.map((d) => {
+              if (d.dayKey === todayKey) return person.openToday;
+              if (d.dayKey > todayKey) return null;
+              return countsByPersonDay.get(`${person.accountId}|${d.dayKey}`) ?? null;
+            }),
+          }))
+          .sort((a, b) => Number(b.unassigned) - Number(a.unassigned) || b.count - a.count);
+
+        const totalLine = {
+          name: 'All tickets',
+          total: true,
+          color: TOTAL_LINE_COLOR,
+          values: histogram.map((d, index) =>
+            d.dayKey > todayKey ? null : personLines.reduce((sum, line) => sum + (line.values[index] ?? 0), 0)
+          ),
+        };
+        const lines = [...personLines, totalLine];
+
+        // The assignee boxes show each name in the colour of that person's line.
+        const colorByKey = new Map(personLines.map((line) => [line.key, line.color]));
+        const assignees = toAssigneeCounts(issues).map((entry) => ({ ...entry, color: colorByKey.get(entry.key) }));
 
         if (!mounted) return;
         setData({
-          total,
+          total: issues.length,
           histogram,
-          historicalHistogram: historical.histogram,
-          historicalIssueCount: historicalIssues.length,
+          lines,
           tickets,
-          assignees: toAssigneeCounts(issues),
+          assignees,
         });
       } catch (e) {
         if (!mounted) return;
@@ -161,7 +256,7 @@ function App() {
     return () => {
       mounted = false;
     };
-  }, [timeframe, interval, appliedJql]);
+  }, [timeframe, appliedJql]);
 
   const totalTickets = data?.tickets?.length ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalTickets / ROWS_PER_PAGE));
@@ -172,7 +267,7 @@ function App() {
 
   useEffect(() => {
     setTablePage(1);
-  }, [appliedJql, timeframe, interval]);
+  }, [appliedJql, timeframe]);
 
   useEffect(() => {
     if (tablePage > totalPages) {
@@ -229,30 +324,18 @@ function App() {
               ))}
             </select>
           </div>
-
-          <div className="block">
-            <label htmlFor="bucket">Bar-size</label>
-            <select id="bucket" value={interval} disabled={isUpdating} onChange={(event) => setInterval(event.target.value)}>
-              {intervalOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
 
-        <div className="small">Total issues: {data?.total ?? 0}</div>
+        <div className="small">Open issues: {data?.total ?? 0} | build 30.10. 11:26 UTC</div>
       </div>
 
       <div className="panel">
         {data?.histogram?.length ? (
           <>
-            <ChartPanel histogram={data.histogram} historicalHistogram={data.historicalHistogram} interval={interval} />
-            <div className="small">Gray bars show the same timeframe from one year earlier, using the same JQL. | Historical rows: {data.historicalIssueCount}</div>
+            <ChartPanel histogram={data.histogram} lines={data.lines} />
           </>
         ) : (
-          <div className="small">No issues were found for the selected timeframe and bucket settings.</div>
+          <div className="small">No issues were found for the selected timeframe.</div>
         )}
       </div>
 
@@ -262,7 +345,9 @@ function App() {
           <div className="assignee-grid">
             {data.assignees.map((entry) => (
               <div key={entry.key} className={`assignee-card ${levelFor(entry.count, entry.unassigned)}`}>
-                <div className="name" title={entry.label}>{entry.label}</div>
+                <div className="name" title={entry.label}>
+                  <span className="name-chip" style={entry.color ? { background: entry.color } : undefined}>{entry.label}</span>
+                </div>
                 <div className="count">{entry.count}</div>
               </div>
             ))}

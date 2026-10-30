@@ -117,9 +117,87 @@ async function loadAllIssues(searchJql, fieldsToRequest, maxPages = 25) {
   return issues;
 }
 
+const OPEN_STATUS_CLAUSE = 'status WAS NOT IN (Closed, Resolved)';
+const DAILY_COUNT_CONCURRENCY = 16;
+const DAILY_COUNT_MAX_REQUESTS = 600;
+
+function stripStatusClause(jql) {
+  return stripOrderByClause(jql).replace(/\s+AND\s+status\s+NOT\s+IN\s*\([^)]*\)/i, '');
+}
+
+async function countIssues(jql) {
+  const countResponse = await api.asApp().requestJira(route`/rest/api/3/search/approximate-count`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ jql }),
+  });
+
+  if (!countResponse.ok) {
+    const countError = await countResponse.text();
+    throw new Error(`Jira count failed (${countResponse.status}): ${countError}`);
+  }
+
+  const countJson = await countResponse.json();
+  return countJson.count ?? 0;
+}
+
+// The frontend sends dates as "yyyy/MM/dd HH:mm"; day keys are "yyyy-MM-dd".
+function toDayKey(jqlDate) {
+  return jqlDate.slice(0, 10).replace(/\//g, '-');
+}
+
+// Past days only (the window start up to yesterday, never beyond the window end): today's point comes from the normal open-ticket query.
+function listPastDays(windowStart, windowEnd, todayKey) {
+  const days = [];
+  const lastDayExclusive = toDayKey(windowEnd) < todayKey ? toDayKey(windowEnd) : todayKey;
+  const cursor = new Date(`${toDayKey(windowStart)}T00:00:00Z`);
+  while (cursor.toISOString().slice(0, 10) < lastDayExclusive) {
+    days.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return days;
+}
+
+async function loadDailyCounts(searchJql, people, days) {
+  if (people.length * days.length > DAILY_COUNT_MAX_REQUESTS) {
+    throw new Error(`Too many daily counts (${people.length} people x ${days.length} days).`);
+  }
+
+  const base = stripStatusClause(searchJql);
+  const jobs = [];
+  for (const person of people) {
+    for (const day of days) {
+      const pointInTime = `${day.replace(/-/g, '/')} 23:59`;
+      const assigneeClause = person.accountId
+        ? `assignee WAS "${person.accountId}" ON "${pointInTime}"`
+        : `assignee WAS EMPTY ON "${pointInTime}"`;
+      const jql = `(${base}) AND ${assigneeClause} AND ${OPEN_STATUS_CLAUSE} ON "${pointInTime}"`;
+      jobs.push({ person, day, jql });
+    }
+  }
+
+  const results = [];
+  let nextJob = 0;
+  async function worker() {
+    while (nextJob < jobs.length) {
+      const job = jobs[nextJob];
+      nextJob += 1;
+      results.push({
+        accountId: job.person.accountId,
+        day: job.day,
+        count: await countIssues(job.jql),
+      });
+    }
+  }
+  await Promise.all(Array.from({ length: DAILY_COUNT_CONCURRENCY }, worker));
+  return results;
+}
+
 resolver.define('loadGadgetData', async ({ payload }) => {
   const searchJql = payload?.searchJql;
-  const historicalJql = payload?.historicalJql;
   const windowStart = payload?.windowStart;
   const windowEnd = payload?.windowEnd;
 
@@ -170,11 +248,29 @@ resolver.define('loadGadgetData', async ({ payload }) => {
   }
 
   const visibleWindowJql = buildWindowScopedJql(searchJql, windowStart, windowEnd);
-  const historicalQuery = (historicalJql ?? '').trim();
+  const openIssues = await loadAllIssues(searchJql, ['created', 'assignee'], 25);
+
+  const peopleByKey = new Map();
+  for (const issue of openIssues) {
+    const accountId = issue.fields?.assignee?.accountId ?? null;
+    if (!peopleByKey.has(accountId)) {
+      peopleByKey.set(accountId, {
+        accountId,
+        displayName: issue.fields?.assignee?.displayName ?? 'Unassigned',
+        openToday: 0,
+      });
+    }
+    peopleByKey.get(accountId).openToday += 1;
+  }
+  const people = [...peopleByKey.values()];
+  const todayKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(new Date());
+  const dailyCounts = await loadDailyCounts(searchJql, people, listPastDays(windowStart, windowEnd, todayKey));
 
   return {
-    issues: await loadAllIssues(searchJql, ['created', 'assignee'], 25),
-    historicalIssues: historicalQuery ? await loadAllIssues(historicalQuery, ['created'], 10) : [],
+    issues: openIssues,
+    people,
+    dailyCounts,
+    todayKey,
     visibleIssues: await loadAllIssues(visibleWindowJql, fieldsToRequest, 10),
     namesMap,
   };

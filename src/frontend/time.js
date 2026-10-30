@@ -6,12 +6,6 @@ export const timeframeOptions = [
   { label: 'Last month', value: 'lastMonth' },
 ];
 
-export const intervalOptions = [
-  { label: 'Hourly', value: 'hour' },
-  { label: 'Daily', value: 'day' },
-  { label: 'Weekly', value: 'week' },
-];
-
 const BERLIN_TIMEZONE = 'Europe/Berlin';
 const MS_PER_HOUR = 60 * 60 * 1000;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
@@ -189,6 +183,12 @@ function getBucketStarts(interval, window) {
   return starts;
 }
 
+// "yyyy-MM-dd" of the Berlin calendar day, the same key the backend uses for its daily counts.
+export function toBerlinDayKey(date) {
+  const parts = getTzParts(date, BERLIN_TIMEZONE);
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+}
+
 export function toTimeHistogram(issues, interval, window) {
   const starts = getBucketStarts(interval, window);
 
@@ -225,6 +225,7 @@ export function toTimeHistogram(issues, interval, window) {
     .map((bin) => ({
       xKey: bin.xKey,
       period: bin.period,
+      dayKey: toBerlinDayKey(new Date(bin.sortKey)),
       tickets: bin.tickets,
       series: 'Tickets',
       isWeekend: interval !== 'week' && ['Sat', 'Sun'].includes(getTzParts(new Date(bin.sortKey), BERLIN_TIMEZONE).weekday),
@@ -244,50 +245,6 @@ export function formatJqlDate(date) {
   return `${parts.year}/${pad2(parts.month)}/${pad2(parts.day)} ${pad2(parts.hour)}:${pad2(parts.minute)}`;
 }
 
-export function shiftDateByYears(date, yearOffset) {
-  const parts = getTzParts(date, BERLIN_TIMEZONE);
-  return zonedDateTimeToUtcDate(
-    {
-      year: parts.year + yearOffset,
-      month: parts.month,
-      day: parts.day,
-      hour: parts.hour,
-      minute: parts.minute,
-      second: parts.second,
-    },
-    BERLIN_TIMEZONE
-  );
-}
-
 export function stripOrderByClause(jql) {
   return (jql ?? '').replace(/\s+order\s+by\b[\s\S]*$/i, '').trim();
 }
-
-export function buildHistoricalHistogramFromPreviousYear(issues, interval, window) {
-  const template = toTimeHistogram([], interval, window);
-  const historicalWindow = {
-    start: shiftDateByYears(window.start, -1),
-    end: shiftDateByYears(window.end, -1),
-  };
-
-  const yearHistogram = toTimeHistogram(issues, interval, historicalWindow);
-
-  return {
-    window: historicalWindow,
-    histogram: template.map((bucket, index) => ({
-      ...bucket,
-      tickets: Number(yearHistogram[index]?.tickets ?? 0),
-      series: 'Historical previous year',
-    })),
-  };
-}
-
-export function buildStaticTimelineJql(searchJql, historicalWindow) {
-  const baseJql = stripOrderByClause(searchJql);
-  if (!baseJql || !historicalWindow?.start || !historicalWindow?.end) {
-    return 'No historical comparison window available yet.';
-  }
-
-  return `(${baseJql}) AND (created >= "${formatJqlDate(historicalWindow.start)}" AND created < "${formatJqlDate(historicalWindow.end)}") ORDER BY created DESC`;
-}
-

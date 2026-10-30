@@ -16,6 +16,25 @@ export function levelFor(count, unassigned = false) {
   return 'high';
 }
 
+export const TOTAL_LINE_COLOR = '#D2042D';
+export const UNASSIGNED_LINE_COLOR = '#F4A3A8';
+export const OVERFLOW_LINE_COLOR = '#B3BAC5';
+
+// Pastel colours for the named people, in the order they are handed out: dark shade first, then light.
+export const LINE_PALETTE = [
+  { name: 'violet', shades: ['#A992D6', '#D3C7EE'] },
+  { name: 'blue', shades: ['#7FAEE0', '#BBD6F3'] },
+  { name: 'green', shades: ['#86C79A', '#BFE6C9'] },
+  { name: 'orange', shades: ['#F3A869', '#F9D3AE'] },
+  { name: 'yellow', shades: ['#EBCB5C', '#F7E7A3'] },
+];
+
+// Colour of the person at this rank (0 = most open tickets). Whoever does not fit into the palette gets gray.
+export function lineColorForRank(rank) {
+  const shades = LINE_PALETTE.flatMap((color) => color.shades);
+  return shades[rank] ?? OVERFLOW_LINE_COLOR;
+}
+
 // One entry per assignee found in the JQL result, biggest first.
 // Tickets without an assignee (or without a readable name) share one "Unassigned" entry.
 export function toAssigneeCounts(issues) {
