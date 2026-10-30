@@ -318,7 +318,7 @@ function App() {
           </div>
         </div>
 
-        <div className="small">Open issues: {data?.total ?? 0} | build 30.10. 13:11 Berlin</div>
+        <div className="small">Open issues: {data?.total ?? 0}</div>
       </div>
 
       <div className="panel">
