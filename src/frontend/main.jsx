@@ -65,26 +65,19 @@ function ChartPanel({ histogram, lines }) {
       animation: false,
       title: {
         text: 'Open tickets per person',
-        subtext: 'one line per assignee = open tickets at the end of each day / red line = all tickets combined / y axis: low numbers stretched, high numbers compressed',
-        textStyle: { fontSize: 13, fontWeight: 700, color: '#5e6c84' },
-        subtextStyle: { fontSize: 12, color: '#42526e' },
+        textStyle: { fontSize: 12, fontWeight: 700, color: '#5e6c84' },
       },
       grid: {
-        top: 70,
+        top: 40,
         left: 42,
         right: 14,
         bottom: 60,
       },
       // The points carry their real ticket count; the stretched position is only for drawing.
+      // Hovering a point shows only that line: day, name and open tickets.
       tooltip: {
-        trigger: 'axis',
-        formatter: (params) => {
-          const rows = params
-            .filter((p) => p.data?.real != null)
-            .sort((a, b) => b.data.real - a.data.real)
-            .map((p) => `${p.marker} ${p.seriesName}: <b>${p.data.real}</b>`);
-          return [params[0]?.axisValue, ...rows].join('<br/>');
-        },
+        trigger: 'item',
+        formatter: (p) => `${p.name}<br/>${p.marker} ${p.seriesName}: <b>${p.data.real}</b> open`,
       },
       xAxis: {
         type: 'category',
@@ -98,7 +91,6 @@ function ChartPanel({ histogram, lines }) {
       },
       yAxis: {
         type: 'value',
-        name: 'Tickets',
         min: 0,
         max: stretchY(yTicks[yTicks.length - 1]),
         splitLine: { show: false },
@@ -128,14 +120,14 @@ function ChartPanel({ histogram, lines }) {
           type: 'line',
           data: line.values.map((v) => (v == null ? null : { value: stretchY(v), real: v })),
           showSymbol: true,
-          symbolSize: 7,
+          symbolSize: 8,
           lineStyle: { width: line.total ? 4 : 3, color: line.color },
           itemStyle: { color: line.color, borderColor: '#FFFFFF', borderWidth: 1 },
           z: line.total ? 10 : 2,
           emphasis: { focus: 'series', lineStyle: { width: line.total ? 5 : 4 } },
         })),
       ],
-      legend: { data: lines.map((line) => line.name), bottom: 0, type: 'scroll' },
+      legend: { data: lines.map((line) => line.name), bottom: 0, type: 'scroll', textStyle: { fontSize: 10 } },
     });
 
     const onResize = () => chart.resize();
@@ -291,42 +283,42 @@ function App() {
     <div className="shell">
       <div className="panel">
         <div className="row">
-          <div className="block grow jql-block">
-            <label htmlFor="jql-filter">Timeline [JQL]</label>
-            <textarea
-              id="jql-filter"
-              value={jqlInput}
-              placeholder={DEFAULT_JQL}
-              onChange={(event) => setJqlInput(event.target.value)}
-              readOnly={isUpdating}
-            />
-            <div>
+          <div className="block jql-block">
+            <label htmlFor="jql-filter">JQL statement</label>
+            <div className="jql-row">
+              <textarea
+                id="jql-filter"
+                value={jqlInput}
+                placeholder={DEFAULT_JQL}
+                onChange={(event) => setJqlInput(event.target.value)}
+                readOnly={isUpdating}
+              />
               <button disabled={isUpdating} onClick={() => setAppliedJql(jqlInput)}>
                 Apply
               </button>
             </div>
           </div>
-        </div>
 
-        <div className="row">
-          <div className="block">
+          <div className="block timeline-block">
             <label htmlFor="timeline">Timeline</label>
-            <select
-              id="timeline"
-              value={timeframe}
-              disabled={isUpdating}
-              onChange={(event) => setTimeframe(event.target.value)}
-            >
-              {timeframeOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <div className="timeline-control">
+              <select
+                id="timeline"
+                value={timeframe}
+                disabled={isUpdating}
+                onChange={(event) => setTimeframe(event.target.value)}
+              >
+                {timeframeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
-        <div className="small">Open issues: {data?.total ?? 0} | build 30.10. 11:26 UTC</div>
+        <div className="small">Open issues: {data?.total ?? 0} | build 30.10. 13:11 Berlin</div>
       </div>
 
       <div className="panel">
@@ -345,10 +337,10 @@ function App() {
           <div className="assignee-grid">
             {data.assignees.map((entry) => (
               <div key={entry.key} className={`assignee-card ${levelFor(entry.count, entry.unassigned)}`}>
+                <div className="count">{entry.count}</div>
                 <div className="name" title={entry.label}>
                   <span className="name-chip" style={entry.color ? { background: entry.color } : undefined}>{entry.label}</span>
                 </div>
-                <div className="count">{entry.count}</div>
               </div>
             ))}
           </div>

@@ -3,7 +3,7 @@ export const DEFAULT_JQL =
 
 export const timeframeOptions = [
   { label: 'This month', value: 'month' },
-  { label: 'Last month', value: 'lastMonth' },
+  { label: 'This week', value: 'week' },
 ];
 
 const BERLIN_TIMEZONE = 'Europe/Berlin';
@@ -124,11 +124,7 @@ export function getWindowForTimeframe(timeframeDays) {
     return getBerlinMonthWindow(0);
   }
 
-  if (timeframeDays === 'lastMonth') {
-    return getBerlinMonthWindow(-1);
-  }
-
-  if (timeframeDays === 7) {
+  if (timeframeDays === 'week' || timeframeDays === 7) {
     return getBerlinWeekWindow();
   }
 
