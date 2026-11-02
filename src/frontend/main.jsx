@@ -7,8 +7,8 @@ import { layoutBubbles } from './pack.js';
 import { STATUS_GROUP_DETAILS, ageInDays, buildAgeStatusTable, parseJiraDate, statusGroupFor } from './statuses.js';
 import { BAR_NORMAL, BAR_REVERSED, rampColor, textColorOn } from './colors.js';
 
-const CHART_WIDTH = 600;
-const CHART_HEIGHT = 380;
+const CHART_MIN_HEIGHT = 300;
+const CHART_MAX_HEIGHT = 460;
 const HEAT = [179, 38, 30]; // #B3261E
 const OTHER_FILL = '#E3E6ED';
 
@@ -22,7 +22,35 @@ function bubbleStyle(group, max) {
 
 function BubbleChart({ groups }) {
   const [hovered, setHovered] = useState(null);
-  const bubbles = useMemo(() => layoutBubbles(groups, CHART_WIDTH, CHART_HEIGHT), [groups]);
+  const wrapRef = useRef(null);
+  const [width, setWidth] = useState(560);
+  const hasGroups = groups.length > 0;
+
+  // The picture takes all the room next to the list and follows the width of the gadget.
+  useEffect(() => {
+    const element = wrapRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return undefined;
+    let timer = null;
+    const measure = () => {
+      const measured = Math.round(element.getBoundingClientRect().width / 20) * 20;
+      if (measured >= 240) setWidth(measured);
+    };
+    // Wait a moment while the window is being dragged, so the layout is not recalculated on every pixel.
+    const update = () => {
+      clearTimeout(timer);
+      timer = setTimeout(measure, 150);
+    };
+    measure();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => {
+      clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [hasGroups]);
+
+  const height = Math.min(CHART_MAX_HEIGHT, Math.max(CHART_MIN_HEIGHT, Math.round(width * 0.58)));
+  const bubbles = useMemo(() => layoutBubbles(groups, width, height), [groups, width, height]);
   const max = groups.length ? groups[0].count : 1;
   const total = groups.reduce((sum, g) => sum + g.count, 0);
 
@@ -39,9 +67,10 @@ function BubbleChart({ groups }) {
         </div>
       </div>
       <div className="chart-body">
+        <div className="chart-wrap" ref={wrapRef}>
         <svg
           className="bubbles"
-          viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+          viewBox={`0 0 ${width} ${height}`}
           role="img"
           aria-label="Bubble chart of tickets grouped by topic"
         >
@@ -81,6 +110,7 @@ function BubbleChart({ groups }) {
             );
           })}
         </svg>
+        </div>
         <ol className="ranking">
           {groups.map((group) => {
             const style = bubbleStyle(group, max);
@@ -181,8 +211,8 @@ function AgeStatusHeatmap({ tickets }) {
           <ScaleBar title="Open work" max={table.maxOpenWork} reversed={false} height={barHeight} />
           <ScaleBar title="Waiting and solved (reversed)" max={table.maxReversed} reversed height={barHeight} />
         </div>
+        <StatusLegend />
       </div>
-      <StatusLegend />
     </>
   );
 }
