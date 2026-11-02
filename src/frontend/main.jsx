@@ -1,152 +1,343 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import * as echarts from 'echarts';
-import { invoke } from '@forge/bridge';
-import {
-  DEFAULT_JQL,
-  buildSearchJql,
-  formatJqlDate,
-  getWindowForTimeframe,
-  timeframeOptions,
-  toTimeHistogram,
-} from './time.js';
-import { toVisibleIssuesWithNames } from './tickets.js';
-import {
-  TOTAL_LINE_COLOR,
-  UNASSIGNED_LINE_COLOR,
-  levelFor,
-  lineColorForRank,
-  toAssigneeCounts,
-} from './assignees.js';
+import { invoke, router } from '@forge/bridge';
+import { DEFAULT_JQL, buildSearchJql } from './jql.js';
+import { groupTickets } from './groups.js';
+import { layoutBubbles } from './pack.js';
+import { STATUS_GROUP_DETAILS, ageInDays, buildAgeStatusTable, parseJiraDate, statusGroupFor } from './statuses.js';
+import { BAR_NORMAL, BAR_REVERSED, rampColor, textColorOn } from './colors.js';
+
+const CHART_WIDTH = 600;
+const CHART_HEIGHT = 380;
+const HEAT = [179, 38, 30]; // #B3261E
+const OTHER_FILL = '#E3E6ED';
+
+// Darker red for more tickets, relative to the biggest group.
+function bubbleStyle(group, max) {
+  if (group.other) return { fill: OTHER_FILL, text: '#172B4D' };
+  const share = 0.18 + 0.82 * Math.pow(group.count / max, 0.8);
+  const rgb = HEAT.map((channel) => Math.round(255 + (channel - 255) * share));
+  return { fill: `rgb(${rgb.join(',')})`, text: share >= 0.62 ? '#FFFFFF' : '#172B4D' };
+}
+
+function BubbleChart({ groups }) {
+  const [hovered, setHovered] = useState(null);
+  const bubbles = useMemo(() => layoutBubbles(groups, CHART_WIDTH, CHART_HEIGHT), [groups]);
+  const max = groups.length ? groups[0].count : 1;
+  const total = groups.reduce((sum, g) => sum + g.count, 0);
+
+  if (!groups.length) {
+    return <div className="small">No tickets for the current JQL.</div>;
+  }
+
+  return (
+    <>
+      <div className="head">
+        <div className="eyebrow">All tickets</div>
+        <div className="big">
+          {total} <span className="big-note">tickets in {groups.length} groups</span>
+        </div>
+      </div>
+      <div className="chart-body">
+        <svg
+          className="bubbles"
+          viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+          role="img"
+          aria-label="Bubble chart of tickets grouped by topic"
+        >
+          {bubbles.map((bubble) => {
+            const style = bubbleStyle(bubble, max);
+            const isHovered = hovered === bubble.label;
+            return (
+              <g
+                key={bubble.label}
+                onMouseEnter={() => setHovered(bubble.label)}
+                onMouseLeave={() => setHovered(null)}
+              >
+                <title>{`${bubble.label}: ${bubble.count} tickets`}</title>
+                <circle
+                  cx={bubble.cx}
+                  cy={bubble.cy}
+                  r={bubble.r}
+                  fill={style.fill}
+                  stroke={isHovered ? '#172B4D' : '#FFFFFF'}
+                  strokeWidth={isHovered ? 3 : 2}
+                />
+                {bubble.r >= 11 && (
+                  <text
+                    x={bubble.cx}
+                    y={bubble.cy}
+                    fill={style.text}
+                    fontSize={Math.min(22, Math.max(11, bubble.r * 0.8))}
+                    fontWeight="700"
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    pointerEvents="none"
+                  >
+                    {bubble.count}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </svg>
+        <ol className="ranking">
+          {groups.map((group) => {
+            const style = bubbleStyle(group, max);
+            return (
+              <li
+                key={group.label}
+                className={hovered === group.label ? 'on' : ''}
+                onMouseEnter={() => setHovered(group.label)}
+                onMouseLeave={() => setHovered(null)}
+              >
+                <span className="swatch" style={{ background: style.fill }} />
+                <span className="rank-label">{group.label}</span>
+                <span className="rank-count">{group.count}</span>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    </>
+  );
+}
+
+// Cell colour from the shared purple-to-cream scale. Open-work columns: many tickets = light (like "busy" in the
+// weekday heatmap). Reversed columns (waiting, solved): many tickets = dark.
+function cellStyle(count, max, reversed) {
+  const share = Math.min(1, count / max);
+  const rgb = rampColor(reversed ? 1 - share : share);
+  return { background: `rgb(${rgb.join(',')})`, color: textColorOn(rgb) };
+}
+
+function tickValues(max) {
+  return [0, 1, 2, 3, 4].map((step) => Math.round(((max * (4 - step)) / 4) * 10) / 10);
+}
+
+function ScaleBar({ title, max, reversed, height }) {
+  return (
+    <div className="scale-col">
+      <div className="scale-body" style={{ height }}>
+        <div className="scale-gradient" style={{ background: reversed ? BAR_REVERSED : BAR_NORMAL }} />
+        <div className="scale-ticks">
+          {tickValues(max).map((value, index) => (
+            <span key={index}>{value}</span>
+          ))}
+        </div>
+      </div>
+      <div className="scale-title">{title}</div>
+    </div>
+  );
+}
+
+function AgeStatusHeatmap({ tickets }) {
+  const table = useMemo(() => buildAgeStatusTable(tickets), [tickets]);
+  const barHeight = table.rows.length * 34;
+
+  return (
+    <>
+      <div className="heat-title">Tickets by age and status</div>
+      <div className="heat-desc">
+        How old the tickets are and where they stand now. {table.total} tickets. Dark purple is quiet, cream is busy.
+        For Waiting for customer and Solved / closed the scale is reversed: dark purple is busy.
+      </div>
+      <div className="heat-layout">
+        <div className="table-scroll">
+          <table className="age-table">
+            <thead>
+              <tr>
+                <th className="corner" />
+                {table.columns.map((column) => (
+                  <th key={column.label}>{column.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {table.rows.map((row) => (
+                <tr key={row.label}>
+                  <th className="row-label">{row.label}</th>
+                  {row.cells.map((count, index) => {
+                    const column = table.columns[index];
+                    const max = column.reversed ? table.maxReversed : table.maxOpenWork;
+                    return (
+                      <td key={column.label}>
+                        <div
+                          className="age-cell"
+                          style={cellStyle(count, max, column.reversed)}
+                          title={`${row.label}, ${column.label}: ${count} tickets`}
+                        >
+                          {count}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="scales">
+          <ScaleBar title="Open work" max={table.maxOpenWork} reversed={false} height={barHeight} />
+          <ScaleBar title="Waiting and solved (reversed)" max={table.maxReversed} reversed height={barHeight} />
+        </div>
+      </div>
+      <StatusLegend />
+    </>
+  );
+}
+
+function StatusLegend() {
+  return (
+    <div className="legend-block">
+      <div className="heat-title">How the statuses are grouped</div>
+      <div className="heat-desc">
+        SUP and ESUP name the same step differently, so each status is sorted into one of these columns. The German
+        names (Gelöst, Geschlossen) are the same statuses. A status that is not listed here goes by its Jira category.
+      </div>
+      <div className="table-scroll">
+        <table className="legend-table">
+          <thead>
+            <tr>
+              <th>Column</th>
+              <th>SUP</th>
+              <th>ESUP</th>
+            </tr>
+          </thead>
+          <tbody>
+            {STATUS_GROUP_DETAILS.map((group) => (
+              <tr key={group.label}>
+                <th scope="row">{group.label}</th>
+                <td>{group.sup.length ? group.sup.join(', ') : '-'}</td>
+                <td>{group.esup.length ? group.esup.join(', ') : '-'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 const ROWS_PER_PAGE = 10;
+const berlinFormatter = new Intl.DateTimeFormat('de-DE', {
+  timeZone: 'Europe/Berlin',
+  day: '2-digit',
+  month: '2-digit',
+  year: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
 
-// Stretched y axis: 0-10 tickets at 6x size, 10-30 at 3x, 30-60 at half, above 60 at a quarter.
-const Y_SEGMENTS = [
-  { from: 0, to: 10, weight: 6 },
-  { from: 10, to: 30, weight: 3 },
-  { from: 30, to: 60, weight: 0.5 },
-  { from: 60, to: Infinity, weight: 0.25 },
-];
-const Y_TICKS = [0, 5, 10, 15, 20, 25, 30, 40, 50, 60, 80, 100, 120, 150, 200, 300];
-
-function stretchY(value) {
-  let position = 0;
-  for (const segment of Y_SEGMENTS) {
-    if (value <= segment.from) break;
-    position += (Math.min(value, segment.to) - segment.from) * segment.weight;
-  }
-  return position;
+function formatBerlin(value) {
+  if (!value) return '-';
+  const date = parseJiraDate(value);
+  return Number.isNaN(date.getTime()) ? '-' : berlinFormatter.format(date);
 }
 
-// Ticks up to and including the first one above the highest value.
-function pickYTicks(maxValue) {
-  const ticks = [];
-  for (const tick of Y_TICKS) {
-    ticks.push(tick);
-    if (tick >= maxValue) return ticks;
-  }
-  return [...ticks, Math.ceil(maxValue / 100) * 100];
+function formatOpenFor(created) {
+  const days = ageInDays(created);
+  if (days === null) return '-';
+  const wholeDays = Math.floor(days);
+  const hours = Math.floor((days - wholeDays) * 24);
+  return wholeDays > 0 ? `${wholeDays}d ${hours}h` : `${hours}h`;
 }
 
-function ChartPanel({ histogram, lines }) {
-  const containerRef = useRef(null);
+// The ticket queue from the CFG gadget: only tickets that are not solved or closed, ten per page.
+function TicketQueue({ tickets }) {
+  const [page, setPage] = useState(1);
+  const queue = useMemo(
+    () => tickets.filter((ticket) => statusGroupFor(ticket.status, ticket.category) !== 'Solved / closed'),
+    [tickets]
+  );
 
   useEffect(() => {
-    if (!containerRef.current || !histogram?.length) return;
+    setPage(1);
+  }, [tickets]);
 
-    const chart = echarts.init(containerRef.current, null, { renderer: 'canvas' });
+  const totalPages = Math.max(1, Math.ceil(queue.length / ROWS_PER_PAGE));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * ROWS_PER_PAGE;
+  const end = start + ROWS_PER_PAGE;
+  const rows = queue.slice(start, end);
 
-    const maxValue = Math.max(1, ...lines.flatMap((line) => line.values.filter((v) => v != null)));
-    const yTicks = pickYTicks(maxValue);
-    const labelFor = (position) => yTicks.find((tick) => Math.abs(stretchY(tick) - position) < 1e-6) ?? '';
-
-    chart.setOption({
-      animation: false,
-      title: {
-        text: 'Open tickets per person',
-        textStyle: { fontSize: 12, fontWeight: 700, color: '#5e6c84' },
-      },
-      grid: {
-        top: 40,
-        left: 42,
-        right: 14,
-        bottom: 60,
-      },
-      // The points carry their real ticket count; the stretched position is only for drawing.
-      // Hovering a point shows only that line: day, name and open tickets.
-      tooltip: {
-        trigger: 'item',
-        formatter: (p) => `${p.name}<br/>${p.marker} ${p.seriesName}: <b>${p.data.real}</b> open`,
-      },
-      xAxis: {
-        type: 'category',
-        data: histogram.map((d) => d.period),
-        axisLabel: {
-          interval: 0,
-          // Saturday and Sunday labels are bold.
-          formatter: (value, index) => (histogram[index]?.isWeekend ? `{weekend|${value}}` : value),
-          rich: { weekend: { fontWeight: 'bold', color: '#172b4d' } },
-        },
-      },
-      yAxis: {
-        type: 'value',
-        min: 0,
-        max: stretchY(yTicks[yTicks.length - 1]),
-        splitLine: { show: false },
-        axisTick: { customValues: yTicks.map(stretchY) },
-        axisLabel: {
-          customValues: yTicks.map(stretchY),
-          formatter: labelFor,
-        },
-      },
-      series: [
-        // Helper series that only draws the grid lines at the real tick positions.
-        {
-          type: 'line',
-          data: [],
-          silent: true,
-          z: 0,
-          markLine: {
-            silent: true,
-            symbol: 'none',
-            label: { show: false },
-            lineStyle: { color: '#EBECF0', type: 'solid', width: 1 },
-            data: yTicks.map((tick) => ({ yAxis: stretchY(tick) })),
-          },
-        },
-        ...lines.map((line) => ({
-          name: line.name,
-          type: 'line',
-          data: line.values.map((v) => (v == null ? null : { value: stretchY(v), real: v })),
-          showSymbol: true,
-          symbolSize: 8,
-          lineStyle: { width: line.total ? 4 : 3, color: line.color },
-          itemStyle: { color: line.color, borderColor: '#FFFFFF', borderWidth: 1 },
-          z: line.total ? 10 : 2,
-          emphasis: { focus: 'series', lineStyle: { width: line.total ? 5 : 4 } },
-        })),
-      ],
-      legend: { data: lines.map((line) => line.name), bottom: 0, type: 'scroll', textStyle: { fontSize: 10 } },
-    });
-
-    const onResize = () => chart.resize();
-    window.addEventListener('resize', onResize);
-
-    return () => {
-      window.removeEventListener('resize', onResize);
-      chart.dispose();
-    };
-  }, [histogram, lines]);
-
-  return <div ref={containerRef} className="chart" />;
+  return (
+    <>
+      <div className="section-heading">Ticket queue (not closed)</div>
+      <div className="queue-pager-row">
+        <div className="small">
+          Showing {queue.length ? start + 1 : 0}-{Math.min(end, queue.length)} of {queue.length}
+        </div>
+        <div className="pager-actions">
+          <button disabled={safePage <= 1} onClick={() => setPage((prev) => Math.max(1, prev - 1))}>
+            Previous 10
+          </button>
+          <span className="small">
+            Page {safePage} / {totalPages}
+          </span>
+          <button disabled={safePage >= totalPages} onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}>
+            Next 10
+          </button>
+        </div>
+      </div>
+      <div className="queue-wrap">
+        <table className="queue-table">
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Project</th>
+              <th>Status</th>
+              <th>Assignee</th>
+              <th>Summary</th>
+              <th>Organization</th>
+              <th>Created (Berlin)</th>
+              <th>Updated (Berlin)</th>
+              <th>Open for</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length ? (
+              rows.map((ticket) => (
+                <tr key={ticket.key}>
+                  <td>
+                    <a
+                      href={`/browse/${ticket.key}`}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        router.open(`/browse/${ticket.key}`);
+                      }}
+                    >
+                      {ticket.key}
+                    </a>
+                  </td>
+                  <td>{ticket.project}</td>
+                  <td>{ticket.status}</td>
+                  <td>{ticket.assignee}</td>
+                  <td>{ticket.summary}</td>
+                  <td>{ticket.organization}</td>
+                  <td>{formatBerlin(ticket.created)}</td>
+                  <td>{formatBerlin(ticket.updated)}</td>
+                  <td>{formatOpenFor(ticket.created)}</td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={9} className="small">
+                  No open tickets for the current JQL.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
 }
 
 function App() {
-  const [timeframe, setTimeframe] = useState('month');
   const [jqlInput, setJqlInput] = useState(DEFAULT_JQL);
   const [appliedJql, setAppliedJql] = useState(DEFAULT_JQL);
-  const [tablePage, setTablePage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState('');
@@ -156,78 +347,19 @@ function App() {
   useEffect(() => {
     let mounted = true;
 
-    async function loadHistogram() {
+    async function loadReport() {
       if (!hasLoadedOnceRef.current) setLoading(true);
       else setIsUpdating(true);
 
       setError('');
 
       try {
-        const window = getWindowForTimeframe(timeframe);
-        const searchJql = buildSearchJql(appliedJql);
-
-        const {
-          issues = [],
-          visibleIssues = [],
-          namesMap = {},
-          people = [],
-          dailyCounts = [],
-          todayKey = '',
-        } = await invoke('loadGadgetData', {
-          searchJql,
-          windowStart: formatJqlDate(window.start),
-          windowEnd: formatJqlDate(window.end),
+        const { total = 0, tickets = [] } = await invoke('loadReportData', {
+          searchJql: buildSearchJql(appliedJql),
         });
-
-        const histogram = toTimeHistogram([], 'day', window);
-        const tickets = toVisibleIssuesWithNames(visibleIssues, window, namesMap);
-
-        // Past days come from the backend's daily counts, today from the open tickets, days after today stay empty.
-        const countsByPersonDay = new Map(dailyCounts.map((c) => [`${c.accountId}|${c.day}`, c.count]));
-        // Named people ranked by open tickets today, same order as the assignee boxes.
-        const rankByAccountId = new Map(
-          people
-            .filter((p) => p.accountId)
-            .sort((a, b) => b.openToday - a.openToday || a.displayName.localeCompare(b.displayName))
-            .map((person, rank) => [person.accountId, rank])
-        );
-        const personLines = people
-          .map((person) => ({
-            key: person.accountId ?? 'Unassigned',
-            name: person.displayName,
-            unassigned: !person.accountId,
-            count: person.openToday,
-            color: person.accountId ? lineColorForRank(rankByAccountId.get(person.accountId)) : UNASSIGNED_LINE_COLOR,
-            values: histogram.map((d) => {
-              if (d.dayKey === todayKey) return person.openToday;
-              if (d.dayKey > todayKey) return null;
-              return countsByPersonDay.get(`${person.accountId}|${d.dayKey}`) ?? null;
-            }),
-          }))
-          .sort((a, b) => Number(b.unassigned) - Number(a.unassigned) || b.count - a.count);
-
-        const totalLine = {
-          name: 'All tickets',
-          total: true,
-          color: TOTAL_LINE_COLOR,
-          values: histogram.map((d, index) =>
-            d.dayKey > todayKey ? null : personLines.reduce((sum, line) => sum + (line.values[index] ?? 0), 0)
-          ),
-        };
-        const lines = [...personLines, totalLine];
-
-        // The assignee boxes show each name in the colour of that person's line.
-        const colorByKey = new Map(personLines.map((line) => [line.key, line.color]));
-        const assignees = toAssigneeCounts(issues).map((entry) => ({ ...entry, color: colorByKey.get(entry.key) }));
 
         if (!mounted) return;
-        setData({
-          total: issues.length,
-          histogram,
-          lines,
-          tickets,
-          assignees,
-        });
+        setData({ total, tickets, groups: groupTickets(tickets) });
       } catch (e) {
         if (!mounted) return;
         setError(e?.message ?? 'Unexpected error while loading gadget data.');
@@ -244,28 +376,11 @@ function App() {
       }
     }
 
-    loadHistogram();
+    loadReport();
     return () => {
       mounted = false;
     };
-  }, [timeframe, appliedJql]);
-
-  const totalTickets = data?.tickets?.length ?? 0;
-  const totalPages = Math.max(1, Math.ceil(totalTickets / ROWS_PER_PAGE));
-  const safePage = Math.min(tablePage, totalPages);
-  const pageStart = (safePage - 1) * ROWS_PER_PAGE;
-  const pageEnd = pageStart + ROWS_PER_PAGE;
-  const pagedTickets = (data?.tickets ?? []).slice(pageStart, pageEnd);
-
-  useEffect(() => {
-    setTablePage(1);
-  }, [appliedJql, timeframe]);
-
-  useEffect(() => {
-    if (tablePage > totalPages) {
-      setTablePage(totalPages);
-    }
-  }, [tablePage, totalPages]);
+  }, [appliedJql]);
 
   if (loading) {
     return <div className="shell">Loading ticket data from Jira...</div>;
@@ -298,109 +413,21 @@ function App() {
               </button>
             </div>
           </div>
-
-          <div className="block timeline-block">
-            <label htmlFor="timeline">Timeline</label>
-            <div className="timeline-control">
-              <select
-                id="timeline"
-                value={timeframe}
-                disabled={isUpdating}
-                onChange={(event) => setTimeframe(event.target.value)}
-              >
-                {timeframeOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
         </div>
 
-        <div className="small">Open issues: {data?.total ?? 0}</div>
+        <div className="small">Tickets found: {data?.total ?? 0}</div>
       </div>
 
       <div className="panel">
-        {data?.histogram?.length ? (
-          <>
-            <ChartPanel histogram={data.histogram} lines={data.lines} />
-          </>
-        ) : (
-          <div className="small">No issues were found for the selected timeframe.</div>
-        )}
+        <BubbleChart groups={data?.groups ?? []} />
       </div>
 
       <div className="panel">
-        <div className="meta section-heading"><strong>Tickets per Assignee</strong></div>
-        {data?.assignees?.length ? (
-          <div className="assignee-grid">
-            {data.assignees.map((entry) => (
-              <div key={entry.key} className={`assignee-card ${levelFor(entry.count, entry.unassigned)}`}>
-                <div className="count">{entry.count}</div>
-                <div className="name" title={entry.label}>
-                  <span className="name-chip" style={entry.color ? { background: entry.color } : undefined}>{entry.label}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="small">No tickets for the current JQL.</div>
-        )}
+        <AgeStatusHeatmap tickets={data?.tickets ?? []} />
       </div>
 
       <div className="panel">
-        <div className="meta section-heading"><strong>Tickets Table</strong></div>
-        <div className="row table-pager-row">
-          <div className="small">
-            Showing {totalTickets ? pageStart + 1 : 0}-{Math.min(pageEnd, totalTickets)} of {totalTickets}
-          </div>
-          <div className="pager-actions">
-            <button disabled={safePage <= 1} onClick={() => setTablePage((prev) => Math.max(1, prev - 1))}>Previous 10</button>
-            <span className="small">Page {safePage} / {totalPages}</span>
-            <button disabled={safePage >= totalPages} onClick={() => setTablePage((prev) => Math.min(totalPages, prev + 1))}>Next 10</button>
-          </div>
-        </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Key</th>
-                <th>Project</th>
-                <th>Impact</th>
-                <th>Assignee</th>
-                <th>Summary</th>
-                <th>Organization</th>
-                <th>Created (Berlin)</th>
-                <th>Delta</th>
-                <th>Updated (Berlin)</th>
-                <th>Closed (Berlin)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pagedTickets.length ? (
-                pagedTickets.map((ticket) => (
-                  <tr key={ticket.key}>
-                    <td><a href={`/browse/${ticket.key}`} target="_blank" rel="noreferrer">{ticket.key}</a></td>
-                    <td>{ticket.project}</td>
-                    <td>{ticket.impact}</td>
-                    <td>{ticket.assignee}</td>
-                    <td>{ticket.summary}</td>
-                    <td>{ticket.organization}</td>
-                    <td>{ticket.createdDisplay}</td>
-                    <td>{ticket.deltaDisplay}</td>
-                    <td>{ticket.updatedDisplay}</td>
-                    <td>{ticket.closedDisplay}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={10} className="small">No tickets for the current filter and timeline.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <TicketQueue tickets={data?.tickets ?? []} />
       </div>
     </div>
   );

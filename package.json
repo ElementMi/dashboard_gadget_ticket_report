@@ -1,8 +1,8 @@
 {
-  "name": "dashboard-gadget-cfg",
+  "name": "dashboard-gadget-ticket-report",
   "version": "1.0.0",
   "private": true,
-  "description": "Element CFG dashboard gadget built with Forge",
+  "description": "Element Ticket Report dashboard gadget built with Forge",
   "scripts": {
     "build:frontend": "vite build",
     "lint": "forge lint",
@@ -14,7 +14,6 @@
     "@forge/api": "^5.1.0",
     "@forge/bridge": "^4.5.0",
     "@forge/resolver": "^1.7.0",
-    "echarts": "^5.5.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
