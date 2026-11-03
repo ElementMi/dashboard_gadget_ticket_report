@@ -52,9 +52,37 @@ const FIXED_GROUPS = [
 // A pastel color of its own for every predefined group (the hue steps by the golden angle, so neighbours never look
 // alike). Groups that are not predefined get no color here: the chart paints them gray.
 const FIXED_LABELS = [...new Set(FIXED_GROUPS.map((rule) => rule.label))];
+// The palette: light pink, light orange, peach, light blue, olive, lime and yellow, plus more pastel colors.
+// Ordered so that groups next to each other in the list get colors that are easy to tell apart.
+const PASTEL_PALETTE = [
+  '#FFC8DD', // light pink
+  '#B5EAD7', // mint
+  '#FFBF80', // light orange
+  '#BFE0FF', // light blue
+  '#CFF5A0', // lime
+  '#D4C1EC', // lavender
+  '#FFF2A1', // yellow
+  '#FFDAB9', // peach
+  '#A0E7E5', // aqua
+  '#C8CF8A', // olive
+  '#FFB3B3', // coral
+  '#B5B9FF', // periwinkle
+  '#E6D5B8', // sand
+  '#E8C5F0', // lilac
+  '#9FD8CF', // teal
+  '#CFE3C0', // sage
+  '#C9B1E3', // grape
+  '#F4A7C3', // rose
+  '#A5D8FF', // sky
+  '#F7D6E0', // blush
+  '#D8E2A8', // pistachio
+  '#FFE0B5', // apricot
+];
+
 export function pastelFor(label) {
   const index = FIXED_LABELS.indexOf(label);
   if (index < 0) return null;
+  if (index < PASTEL_PALETTE.length) return PASTEL_PALETTE[index];
   const hue = Math.round((index * 137.508 + 20) % 360);
   return `hsl(${hue}, 62%, 80%)`;
 }

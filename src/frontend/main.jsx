@@ -5,13 +5,14 @@ import { DEFAULT_JQL, buildSearchJql } from './jql.js';
 import { groupTickets, pastelFor } from './groups.js';
 import { layoutBubbles } from './pack.js';
 import TicketQueue from './TicketQueue.jsx';
+import YearComparison from './YearComparison.jsx';
 import { youtrackProjectsFor } from './youtrackProjects.js';
 
 const CHART_MIN_HEIGHT = 300;
-const CHART_MAX_HEIGHT = 460;
+const CHART_MAX_HEIGHT = 608;
 const OTHER_FILL = '#E3E6ED';
 const AUTOMATIC_FILL = '#97A0AF'; // groups that are not predefined (found automatically), gray
-const BUILD_STAMP = 'build 03.11. 14:17';
+const BUILD_STAMP = 'build 03.11. 15:04';
 
 // Predefined groups: a pastel color of their own. Groups found automatically: gray. "Other": light gray.
 function bubbleStyle(group) {
@@ -20,7 +21,8 @@ function bubbleStyle(group) {
   return { fill: pastel ?? AUTOMATIC_FILL, text: '#172B4D' };
 }
 
-function BubbleChart({ groups }) {
+// below(hovered, setHovered): what is shown under the bubbles (the table of all groups with all-time and yearly numbers).
+function BubbleChart({ groups, below = null }) {
   const [hovered, setHovered] = useState(null);
   const wrapRef = useRef(null);
   const [width, setWidth] = useState(560);
@@ -49,7 +51,7 @@ function BubbleChart({ groups }) {
     };
   }, [hasGroups]);
 
-  const height = Math.min(CHART_MAX_HEIGHT, Math.max(CHART_MIN_HEIGHT, Math.round(width * 0.58)));
+  const height = Math.min(CHART_MAX_HEIGHT, Math.max(CHART_MIN_HEIGHT, Math.round(width * 0.39)));
   const bubbles = useMemo(() => layoutBubbles(groups, width, height), [groups, width, height]);
   const max = groups.length ? groups[0].count : 1;
   const total = groups.reduce((sum, g) => sum + g.count, 0);
@@ -97,7 +99,7 @@ function BubbleChart({ groups }) {
                     x={bubble.cx}
                     y={bubble.cy}
                     fill={style.text}
-                    fontSize={Math.min(22, Math.max(11, bubble.r * 0.8))}
+                    fontSize={Math.min(40, Math.max(11, bubble.r * 0.8))}
                     fontWeight="700"
                     textAnchor="middle"
                     dominantBaseline="central"
@@ -111,24 +113,8 @@ function BubbleChart({ groups }) {
           })}
         </svg>
         </div>
-        <ol className="ranking">
-          {groups.map((group) => {
-            const style = bubbleStyle(group, max);
-            return (
-              <li
-                key={group.label}
-                className={hovered === group.label ? 'on' : ''}
-                onMouseEnter={() => setHovered(group.label)}
-                onMouseLeave={() => setHovered(null)}
-              >
-                <span className="swatch" style={{ background: style.fill }} />
-                <span className="rank-label">{group.label}</span>
-                <span className="rank-count">{group.count}</span>
-              </li>
-            );
-          })}
-        </ol>
       </div>
+      {below ? below(hovered, setHovered) : null}
     </>
   );
 }
@@ -244,21 +230,31 @@ function App() {
               <button disabled={isUpdating} onClick={() => setAppliedJql(jqlInput)}>
                 Apply
               </button>
+              <button className="no-print" onClick={handlePrint}>
+                Print
+              </button>
+              <span className="small found">
+                Tickets found: {data?.total ?? 0} · {BUILD_STAMP}
+              </span>
             </div>
+            {printHint ? <div className="small no-print">{printHint}</div> : null}
           </div>
-        </div>
-
-        <div className="small">
-          Tickets found: {data?.total ?? 0} · {BUILD_STAMP}{' '}
-          <button className="no-print print-button" onClick={handlePrint}>
-            Print
-          </button>
-          {printHint ? <span className="no-print"> {printHint}</span> : null}
         </div>
       </div>
 
       <div className="panel">
-        <BubbleChart groups={data?.groups ?? []} />
+        <BubbleChart
+          groups={data?.groups ?? []}
+          below={(hovered, setHovered) => (
+            <YearComparison
+              tickets={data?.tickets ?? []}
+              groups={data?.groups ?? []}
+              colorFor={(group) => bubbleStyle(group).fill}
+              hovered={hovered}
+              setHovered={setHovered}
+            />
+          )}
+        />
       </div>
 
       <div className="panel print-new-page">

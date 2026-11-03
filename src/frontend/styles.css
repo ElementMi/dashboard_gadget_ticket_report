@@ -13,6 +13,8 @@ body {
 
 .shell {
   padding: 12px;
+  width: 85%;
+  margin: 0 auto;
 }
 
 .row {
@@ -413,5 +415,147 @@ button:disabled {
 
   .gs-table .gs-section-row {
     break-before: page;
+  }
+}
+
+/* Tickets created per year and group (YearComparison.jsx): two tables side by side */
+.yc-split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 40px;
+  align-items: flex-start;
+}
+
+.yc-table {
+  flex: 1 1 300px;
+  min-width: 0;
+  width: auto;
+  max-width: 640px;
+  table-layout: fixed;
+}
+
+.yc-table th.yc-num,
+.yc-table td.yc-num {
+  text-align: right;
+  width: 56px;
+}
+
+.yc-table td.yc-bigger {
+  font-weight: 700;
+}
+
+.yc-table .yc-change {
+  width: 78px;
+  text-align: left;
+  color: #000;
+  white-space: nowrap;
+}
+
+.yc-table td .swatch {
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
+.yc-table .yc-total th,
+.yc-table .yc-total td {
+  background: #f4f5f7;
+  border-top: 2px solid #c1c7d0;
+  font-weight: 700;
+}
+
+@media print {
+  .print-keep-together {
+    break-inside: avoid;
+  }
+}
+
+/* Right side of the diagram: the group list with the year comparison under it */
+.chart-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* More room between the 2026 number and the arrow */
+.yc-table .yc-change {
+  padding-left: 22px;
+  width: 100px;
+}
+
+/* Apply and Print: same size, next to each other, "Tickets found" on the right of them */
+.jql-row button {
+  min-width: 76px;
+}
+
+.jql-row .found {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* The bubbles on top (not too wide), all groups with their numbers as tables below */
+.chart-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.chart-wrap {
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.yc-split {
+  margin-top: 14px;
+}
+
+.yc-table {
+  flex: 1 1 380px;
+}
+
+.yc-table tbody tr.on {
+  background: #f4f5f7;
+}
+
+@media print {
+  .shell {
+    width: 100%;
+  }
+}
+
+/* Bigger diagram (about twice as large), centered list of the groups, JQL box over the full width */
+.block.jql-block {
+  width: 100%;
+}
+
+.chart-wrap {
+  max-width: none;
+}
+
+.yc-split {
+  justify-content: center;
+}
+
+.yc-table {
+  max-width: 560px;
+}
+
+/* "Tickets found" next to the buttons: as large as the "JQL statement" title, not bold */
+.jql-row .found {
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* The diagram box takes the whole width (centered with margin auto it shrank to its content) */
+.chart-wrap {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+@media print {
+  /* Page 1: JQL + bubbles. The table of all groups (all time and per year) gets a page of its own. */
+  .yc-split {
+    break-before: page;
+    break-inside: avoid;
   }
 }
