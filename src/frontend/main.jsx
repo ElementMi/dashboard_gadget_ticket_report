@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { invoke } from '@forge/bridge';
 import { DEFAULT_JQL, buildSearchJql } from './jql.js';
-import { groupTickets, pastelFor } from './groups.js';
+import { groupTickets, groupColorFor } from './groups.js';
 import { layoutBubbles } from './pack.js';
 import TicketQueue from './TicketQueue.jsx';
 import YearComparison from './YearComparison.jsx';
@@ -12,13 +12,13 @@ const CHART_MIN_HEIGHT = 380;
 const CHART_MAX_HEIGHT = 608;
 const OTHER_FILL = '#E3E6ED';
 const AUTOMATIC_FILL = '#97A0AF'; // groups that are not predefined (found automatically), gray
-const BUILD_STAMP = 'build 03.11. 15:25';
+const BUILD_STAMP = 'build 03.11. 15:41';
 
 // Predefined groups: a pastel color of their own. Groups found automatically: gray. "Other": light gray.
+// The numbers in the bubbles are dark, as in the original.
 function bubbleStyle(group) {
-  if (group.other) return { fill: OTHER_FILL, text: '#505F79' };
-  const pastel = group.fixed ? pastelFor(group.label) : null;
-  return { fill: pastel ?? AUTOMATIC_FILL, text: '#505F79' };
+  const fill = group.other ? OTHER_FILL : (group.fixed ? groupColorFor(group.label) : null) ?? AUTOMATIC_FILL;
+  return { fill, text: '#172B4D' };
 }
 
 // below(hovered, setHovered): what is shown under the bubbles (the table of all groups with all-time and yearly numbers).

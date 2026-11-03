@@ -49,10 +49,10 @@ const FIXED_GROUPS = [
   { label: 'Auftrag / Disposition / PZ - Nummer', blue: true, test: /\bpz\s*-?\s*\d|\bauftrag|\baufträge|status\s*50|dispo|bedarfsmenge/i },
 ];
 
-// A pastel color of its own for every predefined group (the hue steps by the golden angle, so neighbours never look
+// A pastel color of its own for every predefined group (beyond the palette the hue steps by the golden angle, so neighbours never look
 // alike). Groups that are not predefined get no color here: the chart paints them gray.
 const FIXED_LABELS = [...new Set(FIXED_GROUPS.map((rule) => rule.label))];
-// The palette: light pink, light orange, peach, light blue, olive, lime and yellow, plus more pastel colors.
+// The pastel palette: light pink, light orange, peach, light blue, olive, lime and yellow, plus more pastel colors.
 // Ordered so that groups next to each other in the list get colors that are easy to tell apart.
 const PASTEL_PALETTE = [
   '#FFC8DD', // light pink
@@ -79,7 +79,7 @@ const PASTEL_PALETTE = [
   '#FFE0B5', // apricot
 ];
 
-export function pastelFor(label) {
+export function groupColorFor(label) {
   const index = FIXED_LABELS.indexOf(label);
   if (index < 0) return null;
   if (index < PASTEL_PALETTE.length) return PASTEL_PALETTE[index];
