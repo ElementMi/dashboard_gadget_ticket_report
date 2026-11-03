@@ -16,9 +16,43 @@ const STOP_WORDS = new Set(
   `nicht kann können konnte werden wird wurde sind ist für eine einen einer eines dem den der die das und oder
   mit von auf aus bei nach zum zur über unter noch auch wieder keine kein dass wir sie nur bitte danke ohne mehr
   bereits wurden worden zwischen beim vom ins dieser dieses diese hallo guten sich lässt trotz
+  aber wenn dann weil also schon jetzt heute gestern immer leider dort hier damit sowie sollte soll würde wäre
+  haben hatte hatten gibt gab geht ging kommt kommen sehen sieht wollen wollte müssen musste folgende folgender
+  alle alles allen gerne vielen freundlichen grüßen viele liebe habe hätte können könnten dürfen mein meine unser unsere
   with from that this have been cannot when after before into does will please there their what which`
     .split(/\s+/)
     .filter(Boolean)
+);
+
+// Fixed groups. The first rule that matches the title wins; everything else is grouped automatically (below).
+const FIXED_GROUPS = [
+  { label: 'Workflow / Camunda', test: /camunda|user\s?task|workflow/i },
+  { label: 'Fehler Kategorie', test: /kategorie\s*1|\bkat\.?\s*1\b/i },
+  { label: 'Lager / Kasto', test: /kasto|hochregal|\bhrl\b/i },
+  { label: 'Reservierung', blue: true, test: /reservier|reservation/i },
+  { label: 'Verladung / Versand', blue: true, test: /verlad|\btour|umtour|ladungsplanung|versandbeleg/i },
+  { label: 'Packen / Verpacken', blue: true, test: /packplatz|packzettel|verdicht|umpack|verpack/i },
+  { label: 'Kommissionierung', blue: true, test: /\bs(ä|ae)ge/i },
+  { label: 'Schnittstelle / Zabbix', test: /^(?!.*packzettel).*(schnittstelle|übergabe|übertrag|übermittl|rückmeldung|zabbix|interface|handover)/i },
+  { label: 'Belege / Etiketten / Drucker', test: /etikett|drucker|druck|beleg(e|en)?\b/i },
+  { label: 'Hardware / Systemtechnik', test: /\bmde\b|\berp\b|update|wartung|netzwerk|\bnetz\b|vpn|w-?lan|performance|stillstand|verbindung|\bserver|festplatte|system (hängt|funktioniert nicht)/i },
+  { label: 'Stammdaten', test: /sachnummernstamm|stammdat|migration|konfig|neue[nrs]?\s+lagerpl/i },
+  { label: 'Datenbereinigung / Removal / Tätigkeiten', test: /datenbereinigung|removal|t[äa]tigkeit|fehlerhaft\w*\s+(datens|le\b)|l[äa]ss\w*\s+sich\s+nicht\s+l[öo]schen/i },
+  { label: 'Sprachnachricht / Einspielung / Bugfix / Patchday', test: /sprachnachricht|patchday|\bpatch|einspiel|bugfix/i },
+  { label: 'Inventur', blue: true, test: /inventur|nulldurchgang|restmengenkorrektur|l[äa]ngen in is\b|\bis gekennzeichnete/i },
+  { label: 'Nachschub / Umlagerung', blue: true, test: /nachschub|naschub|umlager|puffern/i },
+  { label: 'Kommissionierung', blue: true, test: /kommissionier|kommisionier|entnahme|entnommen|überliefer/i },
+  { label: 'Einlagerung', blue: true, test: /einlager|lagerplatz|versandpuffer|ablegen/i },
+  { label: 'Wareneingang', blue: true, test: /wareneingang|lagerzug[aä]ng|bestellung|voranmeld|\bwe\b/i },
+  { label: 'Lagerbestand', blue: true, test: /bestand|sperrkennz|ausbuch/i },
+  { label: 'Kommissionierung', blue: true, test: /l[äa]ngen?\b/i },
+  { label: 'Auftrag / Disposition / PZ - Nummer', blue: true, test: /\bpz\s*-?\s*\d|\bauftrag|\baufträge|status\s*50|dispo|bedarfsmenge/i },
+];
+
+// Words that say nothing about the topic. They are never used as a group name.
+const EMPTY_WORDS = new Set(
+  `fehler fehlerhafte fehlerhafter funktioniert möglich status supcis problem bearbeiten daten menge bocholt voerde
+  elsinghorst`.split(/\s+/)
 );
 
 // Smaller organizations need a smaller threshold, so they still get groups.
@@ -31,7 +65,7 @@ function wordsOf(title) {
     .toLowerCase()
     .replace(/\[[^\]]*\]/g, ' ')
     .replace(/\S*\d\S*/g, ' ');
-  return (cleaned.match(/[a-zäöüßæøå]{4,}/g) ?? []).filter((word) => !STOP_WORDS.has(word));
+  return (cleaned.match(/[a-zäöüßæøå]{4,}/g) ?? []).filter((word) => !STOP_WORDS.has(word) && !EMPTY_WORDS.has(word));
 }
 
 function capitalise(word) {
@@ -62,30 +96,83 @@ export function groupTickets(tickets) {
 
   const grouped = new Array(total).fill(false);
   const groups = [];
+  // The group label of every ticket, in the same order as `tickets` ("Other" for the leftovers).
+  const labelOf = new Array(total).fill(OTHER_LABEL);
+
+  // Fixed groups first: each ticket joins the first rule that matches its title.
+  const fixedCounts = new Map();
+  const blueLabels = new Set();
+  tickets.forEach((ticket, index) => {
+    // The [TAGS] in square brackets are ours, not the customer's wording: match the title without them.
+    const title = (ticket.summary ?? '').replace(/\[[^\]]*\]/g, ' ');
+    const rule = FIXED_GROUPS.find((candidate) => candidate.test.test(title));
+    if (!rule) return;
+    grouped[index] = true;
+    labelOf[index] = rule.label;
+    fixedCounts.set(rule.label, (fixedCounts.get(rule.label) ?? 0) + 1);
+    if (rule.blue) blueLabels.add(rule.label);
+  });
+  for (const [label, count] of fixedCounts) groups.push({ label, count, other: false, fixed: true, blue: blueLabels.has(label) });
   const usedStems = new Set();
 
-  for (;;) {
-    let bestStem = null;
-    let bestCount = 0;
-    for (const [stem, members] of ticketsByStem) {
-      if (usedStems.has(stem)) continue;
-      let count = 0;
-      for (const index of members) if (!grouped[index]) count += 1;
-      if (count > bestCount) {
-        bestStem = stem;
-        bestCount = count;
+  // Repeatedly takes the word that covers the most still-ungrouped tickets and makes it a group.
+  function takeGroups(index, forms) {
+    for (;;) {
+      let bestStem = null;
+      let bestCount = 0;
+      for (const [stem, members] of index) {
+        if (usedStems.has(stem)) continue;
+        let count = 0;
+        for (const member of members) if (!grouped[member]) count += 1;
+        if (count > bestCount) {
+          bestStem = stem;
+          bestCount = count;
+        }
       }
-    }
-    if (!bestStem || bestCount < threshold) break;
+      if (!bestStem || bestCount < threshold) break;
 
-    usedStems.add(bestStem);
-    for (const index of ticketsByStem.get(bestStem)) grouped[index] = true;
-    const label = [...spellings.get(bestStem).entries()].sort((a, b) => b[1] - a[1])[0][0];
-    groups.push({ label: capitalise(label), count: bestCount, other: false });
+      usedStems.add(bestStem);
+      const label = capitalise([...forms.get(bestStem).entries()].sort((a, b) => b[1] - a[1])[0][0]);
+      for (const member of index.get(bestStem)) {
+        if (!grouped[member]) labelOf[member] = label;
+        grouped[member] = true;
+      }
+      groups.push({ label, count: bestCount, other: false });
+    }
   }
+
+  // Pass 1: the words of the titles.
+  takeGroups(ticketsByStem, spellings);
+
+  // Pass 2: only the tickets that are still ungrouped, now with the words of the description as well.
+  // A description word may only name a group if it also appears in ticket titles, so names from signatures never do.
+  const titleStems = new Set(tickets.flatMap((ticket) => wordsOf(ticket.summary).map((word) => word.slice(0, STEM_LENGTH))));
+  const index2 = new Map();
+  const forms2 = new Map();
+  tickets.forEach((ticket, position) => {
+    if (grouped[position]) return;
+    const words = [
+      ...wordsOf(ticket.summary),
+      ...wordsOf(ticket.description).filter((word) => titleStems.has(word.slice(0, STEM_LENGTH))),
+    ];
+    const seen = new Set();
+    for (const word of words) {
+      const stem = word.slice(0, STEM_LENGTH);
+      if (!seen.has(stem)) {
+        seen.add(stem);
+        if (!index2.has(stem)) index2.set(stem, []);
+        index2.get(stem).push(position);
+      }
+      if (!forms2.has(stem)) forms2.set(stem, new Map());
+      forms2.get(stem).set(word, (forms2.get(stem).get(word) ?? 0) + 1);
+    }
+  });
+  takeGroups(index2, forms2);
 
   const leftover = grouped.filter((flag) => !flag).length;
   if (leftover) groups.push({ label: OTHER_LABEL, count: leftover, other: true });
 
-  return groups.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  const sorted = groups.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  sorted.labelOf = labelOf;
+  return sorted;
 }

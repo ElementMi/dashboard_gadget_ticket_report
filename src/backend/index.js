@@ -84,6 +84,22 @@ function toNames(value) {
   return value.map((item) => item?.name ?? item?.displayName ?? item?.value ?? '').filter(Boolean).join(', ') || '-';
 }
 
+function plainText(node) {
+  if (!node) return '';
+  if (node.text) return node.text;
+  return (node.content ?? []).map(plainText).join(' ');
+}
+
+// Description as a short plain-text hint for sorting: no greeting, no closing (that is where the names are).
+function descriptionExcerpt(description) {
+  return plainText(description)
+    .replace(/\s+/g, ' ')
+    .replace(/\b(mit freundlichen gr(ü|ue)ßen|freundliche gr(ü|ue)ße|viele gr(ü|ue)ße|vielen dank|danke|gruß|lg)\b.*$/i, '')
+    .replace(/^(guten (morgen|tag|abend)|hallo|hi|moin|mahlzeit|servus)[^,.!:]{0,40}[,.!:]?\s*/i, '')
+    .trim()
+    .slice(0, 300);
+}
+
 resolver.define('loadReportData', async ({ payload }) => {
   const searchJql = payload?.searchJql;
 
@@ -92,7 +108,7 @@ resolver.define('loadReportData', async ({ payload }) => {
   }
 
   const organizationFieldId = await findOrganizationFieldId();
-  const fieldsToRequest = ['summary', 'created', 'updated', 'status', 'assignee', 'project'];
+  const fieldsToRequest = ['summary', 'description', 'created', 'updated', 'status', 'assignee', 'project'];
   if (organizationFieldId) fieldsToRequest.push(organizationFieldId);
 
   const issues = await loadAllIssues(searchJql, fieldsToRequest, 25);
@@ -102,6 +118,7 @@ resolver.define('loadReportData', async ({ payload }) => {
     tickets: issues.map((issue) => ({
       key: issue.key,
       summary: issue.fields?.summary ?? '',
+      description: descriptionExcerpt(issue.fields?.description),
       created: issue.fields?.created ?? null,
       updated: issue.fields?.updated ?? null,
       status: issue.fields?.status?.name ?? '',

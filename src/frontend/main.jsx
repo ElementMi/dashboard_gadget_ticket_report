@@ -1,20 +1,24 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { invoke, router } from '@forge/bridge';
+import { invoke } from '@forge/bridge';
 import { DEFAULT_JQL, buildSearchJql } from './jql.js';
 import { groupTickets } from './groups.js';
 import { layoutBubbles } from './pack.js';
-import { STATUS_GROUP_DETAILS, ageInDays, buildAgeStatusTable, parseJiraDate, statusGroupFor } from './statuses.js';
-import { BAR_NORMAL, BAR_REVERSED, rampColor, textColorOn } from './colors.js';
+import TicketQueue from './TicketQueue.jsx';
 
 const CHART_MIN_HEIGHT = 300;
 const CHART_MAX_HEIGHT = 460;
 const HEAT = [179, 38, 30]; // #B3261E
 const OTHER_FILL = '#E3E6ED';
+const FIXED_FILL = '#97A0AF'; // fixed (hard-coded) groups, gray for now
+const BLUE_FILL = '#8AB4E8'; // groups sorted by process step
+const BUILD_STAMP = 'build 03.11. 12:33';
 
 // Darker red for more tickets, relative to the biggest group.
 function bubbleStyle(group, max) {
   if (group.other) return { fill: OTHER_FILL, text: '#172B4D' };
+  if (group.blue) return { fill: BLUE_FILL, text: '#172B4D' };
+  if (group.fixed) return { fill: FIXED_FILL, text: '#172B4D' };
   const share = 0.18 + 0.82 * Math.pow(group.count / max, 0.8);
   const rgb = HEAT.map((channel) => Math.round(255 + (channel - 255) * share));
   return { fill: `rgb(${rgb.join(',')})`, text: share >= 0.62 ? '#FFFFFF' : '#172B4D' };
@@ -133,238 +137,6 @@ function BubbleChart({ groups }) {
   );
 }
 
-// Cell colour from the shared purple-to-cream scale. Open-work columns: many tickets = light (like "busy" in the
-// weekday heatmap). Reversed columns (waiting, solved): many tickets = dark.
-function cellStyle(count, max, reversed) {
-  const share = Math.min(1, count / max);
-  const rgb = rampColor(reversed ? 1 - share : share);
-  return { background: `rgb(${rgb.join(',')})`, color: textColorOn(rgb) };
-}
-
-function tickValues(max) {
-  return [0, 1, 2, 3, 4].map((step) => Math.round(((max * (4 - step)) / 4) * 10) / 10);
-}
-
-function ScaleBar({ title, max, reversed, height }) {
-  return (
-    <div className="scale-col">
-      <div className="scale-body" style={{ height }}>
-        <div className="scale-gradient" style={{ background: reversed ? BAR_REVERSED : BAR_NORMAL }} />
-        <div className="scale-ticks">
-          {tickValues(max).map((value, index) => (
-            <span key={index}>{value}</span>
-          ))}
-        </div>
-      </div>
-      <div className="scale-title">{title}</div>
-    </div>
-  );
-}
-
-function AgeStatusHeatmap({ tickets }) {
-  const table = useMemo(() => buildAgeStatusTable(tickets), [tickets]);
-  const barHeight = table.rows.length * 34;
-
-  return (
-    <>
-      <div className="heat-title">Tickets by age and status</div>
-      <div className="heat-desc">
-        How old the tickets are and where they stand now. {table.total} tickets. Dark purple is quiet, cream is busy.
-        For Waiting for customer and Solved / closed the scale is reversed: dark purple is busy.
-      </div>
-      <div className="heat-layout">
-        <div className="table-scroll">
-          <table className="age-table">
-            <thead>
-              <tr>
-                <th className="corner" />
-                {table.columns.map((column) => (
-                  <th key={column.label}>{column.label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {table.rows.map((row) => (
-                <tr key={row.label}>
-                  <th className="row-label">{row.label}</th>
-                  {row.cells.map((count, index) => {
-                    const column = table.columns[index];
-                    const max = column.reversed ? table.maxReversed : table.maxOpenWork;
-                    return (
-                      <td key={column.label}>
-                        <div
-                          className="age-cell"
-                          style={cellStyle(count, max, column.reversed)}
-                          title={`${row.label}, ${column.label}: ${count} tickets`}
-                        >
-                          {count}
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="scales">
-          <ScaleBar title="Open work" max={table.maxOpenWork} reversed={false} height={barHeight} />
-          <ScaleBar title="Waiting and solved (reversed)" max={table.maxReversed} reversed height={barHeight} />
-        </div>
-        <StatusLegend />
-      </div>
-    </>
-  );
-}
-
-function StatusLegend() {
-  return (
-    <div className="legend-block">
-      <div className="heat-title">How the statuses are grouped</div>
-      <div className="heat-desc">
-        SUP and ESUP name the same step differently, so each status is sorted into one of these columns. The German
-        names (Gelöst, Geschlossen) are the same statuses. A status that is not listed here goes by its Jira category.
-      </div>
-      <div className="table-scroll">
-        <table className="legend-table">
-          <thead>
-            <tr>
-              <th>Column</th>
-              <th>SUP</th>
-              <th>ESUP</th>
-            </tr>
-          </thead>
-          <tbody>
-            {STATUS_GROUP_DETAILS.map((group) => (
-              <tr key={group.label}>
-                <th scope="row">{group.label}</th>
-                <td>{group.sup.length ? group.sup.join(', ') : '-'}</td>
-                <td>{group.esup.length ? group.esup.join(', ') : '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-const ROWS_PER_PAGE = 10;
-const berlinFormatter = new Intl.DateTimeFormat('de-DE', {
-  timeZone: 'Europe/Berlin',
-  day: '2-digit',
-  month: '2-digit',
-  year: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false,
-});
-
-function formatBerlin(value) {
-  if (!value) return '-';
-  const date = parseJiraDate(value);
-  return Number.isNaN(date.getTime()) ? '-' : berlinFormatter.format(date);
-}
-
-function formatOpenFor(created) {
-  const days = ageInDays(created);
-  if (days === null) return '-';
-  const wholeDays = Math.floor(days);
-  const hours = Math.floor((days - wholeDays) * 24);
-  return wholeDays > 0 ? `${wholeDays}d ${hours}h` : `${hours}h`;
-}
-
-// The ticket queue from the CFG gadget: only tickets that are not solved or closed, ten per page.
-function TicketQueue({ tickets }) {
-  const [page, setPage] = useState(1);
-  const queue = useMemo(
-    () => tickets.filter((ticket) => statusGroupFor(ticket.status, ticket.category) !== 'Solved / closed'),
-    [tickets]
-  );
-
-  useEffect(() => {
-    setPage(1);
-  }, [tickets]);
-
-  const totalPages = Math.max(1, Math.ceil(queue.length / ROWS_PER_PAGE));
-  const safePage = Math.min(page, totalPages);
-  const start = (safePage - 1) * ROWS_PER_PAGE;
-  const end = start + ROWS_PER_PAGE;
-  const rows = queue.slice(start, end);
-
-  return (
-    <>
-      <div className="section-heading">Ticket queue (not closed)</div>
-      <div className="queue-pager-row">
-        <div className="small">
-          Showing {queue.length ? start + 1 : 0}-{Math.min(end, queue.length)} of {queue.length}
-        </div>
-        <div className="pager-actions">
-          <button disabled={safePage <= 1} onClick={() => setPage((prev) => Math.max(1, prev - 1))}>
-            Previous 10
-          </button>
-          <span className="small">
-            Page {safePage} / {totalPages}
-          </span>
-          <button disabled={safePage >= totalPages} onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}>
-            Next 10
-          </button>
-        </div>
-      </div>
-      <div className="queue-wrap">
-        <table className="queue-table">
-          <thead>
-            <tr>
-              <th>Key</th>
-              <th>Project</th>
-              <th>Status</th>
-              <th>Assignee</th>
-              <th>Summary</th>
-              <th>Organization</th>
-              <th>Created (Berlin)</th>
-              <th>Updated (Berlin)</th>
-              <th>Open for</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length ? (
-              rows.map((ticket) => (
-                <tr key={ticket.key}>
-                  <td>
-                    <a
-                      href={`/browse/${ticket.key}`}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        router.open(`/browse/${ticket.key}`);
-                      }}
-                    >
-                      {ticket.key}
-                    </a>
-                  </td>
-                  <td>{ticket.project}</td>
-                  <td>{ticket.status}</td>
-                  <td>{ticket.assignee}</td>
-                  <td>{ticket.summary}</td>
-                  <td>{ticket.organization}</td>
-                  <td>{formatBerlin(ticket.created)}</td>
-                  <td>{formatBerlin(ticket.updated)}</td>
-                  <td>{formatOpenFor(ticket.created)}</td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan={9} className="small">
-                  No open tickets for the current JQL.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </>
-  );
-}
-
 function App() {
   const [jqlInput, setJqlInput] = useState(DEFAULT_JQL);
   const [appliedJql, setAppliedJql] = useState(DEFAULT_JQL);
@@ -445,7 +217,7 @@ function App() {
           </div>
         </div>
 
-        <div className="small">Tickets found: {data?.total ?? 0}</div>
+        <div className="small">Tickets found: {data?.total ?? 0} · {BUILD_STAMP}</div>
       </div>
 
       <div className="panel">
@@ -453,11 +225,7 @@ function App() {
       </div>
 
       <div className="panel">
-        <AgeStatusHeatmap tickets={data?.tickets ?? []} />
-      </div>
-
-      <div className="panel">
-        <TicketQueue tickets={data?.tickets ?? []} />
+        <TicketQueue tickets={data?.tickets ?? []} groups={data?.groups ?? []} />
       </div>
     </div>
   );
