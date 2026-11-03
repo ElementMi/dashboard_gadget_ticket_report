@@ -59,9 +59,16 @@ function YoutrackRows({ youtrack, jiraAll }) {
         );
         return (
           <React.Fragment key={project.project}>
+            <tr className="gs-group-title">
+              <th colSpan={span}>
+                {project.project} - {project.name}
+              </th>
+            </tr>
             <tr className="gs-group">
               <th>
-                {project.project} - {project.name}
+                <span className="screen-only">
+                  {project.project} - {project.name}
+                </span>
               </th>
               {project.counts.map((count, index) => (
                 <td key={STATUS_COLUMNS[index]} className="gs-num">
@@ -101,7 +108,10 @@ function YoutrackRows({ youtrack, jiraAll }) {
           </React.Fragment>
         );
       })}
-      <SumRow label="All YouTrack tickets" counts={youtrackAll.counts} total={youtrackAll.total} className="gs-total-row" />
+      {/* With one YouTrack project its row above already shows these numbers. */}
+      {youtrack.projects.length > 1 ? (
+        <SumRow label="All YouTrack tickets" counts={youtrackAll.counts} total={youtrackAll.total} className="gs-total-row" />
+      ) : null}
       {jiraAll ? (
         <SumRow
           label="All tickets (Jira + YouTrack)"
@@ -184,10 +194,19 @@ export default function TicketQueue({ tickets, groups, youtrack, printAll = fals
             {blocks.length ? (
               blocks.map((block) => (
                 <React.Fragment key={`${block.row.label}-${block.continued ? 'c' : 'a'}`}>
-                  <tr className="gs-group">
-                    <th>
+                  {/* Only in the printout: the group name on its own line above the numbers. */}
+                  <tr className="gs-group-title">
+                    <th colSpan={columnCount}>
                       {block.row.label}
                       {block.continued ? ' (continued)' : ''}
+                    </th>
+                  </tr>
+                  <tr className="gs-group">
+                    <th>
+                      <span className="screen-only">
+                        {block.row.label}
+                        {block.continued ? ' (continued)' : ''}
+                      </span>
                     </th>
                     {block.row.counts.map((count, index) => (
                       <td key={STATUS_COLUMNS[index]} className="gs-num">

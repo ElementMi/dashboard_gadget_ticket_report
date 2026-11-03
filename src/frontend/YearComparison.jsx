@@ -37,8 +37,8 @@ function YearTable({ report, rows, offset, groups, colorFor, hovered, setHovered
                 {row.label}
               </td>
               <td className="yc-num yc-all">{group.count}</td>
-              <td className={`yc-num${row.last > row.current ? ' yc-bigger' : ''}`}>{row.last}</td>
-              <td className={`yc-num${row.current > row.last ? ' yc-bigger' : ''}`}>{row.current}</td>
+              <td className="yc-num">{row.last}</td>
+              <td className="yc-num">{row.current}</td>
               <td className="yc-change">{change(row)}</td>
             </tr>
           );
@@ -59,32 +59,21 @@ function YearTable({ report, rows, offset, groups, colorFor, hovered, setHovered
   );
 }
 
-// All groups below the diagram: the all-time number and the two years next to each other, in two tables side by side.
+// All groups on the right of the diagram: the all-time number and the two years next to each other.
 // colorFor(group) gives the swatch color; hovered / setHovered link the rows to the bubbles.
 export default function YearComparison({ tickets, groups, colorFor, hovered, setHovered }) {
   const report = useMemo(() => buildYearComparison(tickets, groups), [tickets, groups]);
   if (!groups.length) return null;
 
-  const half = Math.ceil(report.rows.length / 2);
-  const left = report.rows.slice(0, half);
-  const right = report.rows.slice(half);
   const total = { ...report.total, all: groups.reduce((sum, group) => sum + group.count, 0) };
 
+  // One table with all groups, on the right of the bubbles.
   return (
-    <div className="yc-split">
+    <div className="yc-side">
       <YearTable
         report={report}
-        rows={left}
+        rows={report.rows}
         offset={0}
-        groups={groups}
-        colorFor={colorFor}
-        hovered={hovered}
-        setHovered={setHovered}
-      />
-      <YearTable
-        report={report}
-        rows={right}
-        offset={half}
         groups={groups}
         colorFor={colorFor}
         hovered={hovered}

@@ -8,21 +8,21 @@ import TicketQueue from './TicketQueue.jsx';
 import YearComparison from './YearComparison.jsx';
 import { youtrackProjectsFor } from './youtrackProjects.js';
 
-const CHART_MIN_HEIGHT = 300;
+const CHART_MIN_HEIGHT = 380;
 const CHART_MAX_HEIGHT = 608;
 const OTHER_FILL = '#E3E6ED';
 const AUTOMATIC_FILL = '#97A0AF'; // groups that are not predefined (found automatically), gray
-const BUILD_STAMP = 'build 03.11. 15:04';
+const BUILD_STAMP = 'build 03.11. 15:25';
 
 // Predefined groups: a pastel color of their own. Groups found automatically: gray. "Other": light gray.
 function bubbleStyle(group) {
-  if (group.other) return { fill: OTHER_FILL, text: '#172B4D' };
+  if (group.other) return { fill: OTHER_FILL, text: '#505F79' };
   const pastel = group.fixed ? pastelFor(group.label) : null;
-  return { fill: pastel ?? AUTOMATIC_FILL, text: '#172B4D' };
+  return { fill: pastel ?? AUTOMATIC_FILL, text: '#505F79' };
 }
 
 // below(hovered, setHovered): what is shown under the bubbles (the table of all groups with all-time and yearly numbers).
-function BubbleChart({ groups, below = null }) {
+function BubbleChart({ groups, below = null, printMode = false }) {
   const [hovered, setHovered] = useState(null);
   const wrapRef = useRef(null);
   const [width, setWidth] = useState(560);
@@ -51,8 +51,14 @@ function BubbleChart({ groups, below = null }) {
     };
   }, [hasGroups]);
 
-  const height = Math.min(CHART_MAX_HEIGHT, Math.max(CHART_MIN_HEIGHT, Math.round(width * 0.39)));
-  const bubbles = useMemo(() => layoutBubbles(groups, width, height), [groups, width, height]);
+  const height = Math.min(CHART_MAX_HEIGHT, Math.max(CHART_MIN_HEIGHT, Math.round(width * 0.6)));
+  // For the printout the bubbles are laid out as a rounder cloud in a square box, so they fill a portrait page.
+  const layoutWidth = printMode ? 700 : width;
+  const layoutHeight = printMode ? 700 : height;
+  const bubbles = useMemo(
+    () => layoutBubbles(groups, layoutWidth, layoutHeight, printMode ? 0.95 : 0.62),
+    [groups, layoutWidth, layoutHeight, printMode]
+  );
   const max = groups.length ? groups[0].count : 1;
   const total = groups.reduce((sum, g) => sum + g.count, 0);
 
@@ -72,7 +78,7 @@ function BubbleChart({ groups, below = null }) {
         <div className="chart-wrap" ref={wrapRef}>
         <svg
           className="bubbles"
-          viewBox={`0 0 ${width} ${height}`}
+          viewBox={`0 0 ${layoutWidth} ${layoutHeight}`}
           role="img"
           aria-label="Bubble chart of tickets grouped by topic"
         >
@@ -113,8 +119,8 @@ function BubbleChart({ groups, below = null }) {
           })}
         </svg>
         </div>
+        {below ? below(hovered, setHovered) : null}
       </div>
-      {below ? below(hovered, setHovered) : null}
     </>
   );
 }
@@ -245,6 +251,7 @@ function App() {
       <div className="panel">
         <BubbleChart
           groups={data?.groups ?? []}
+          printMode={printAll}
           below={(hovered, setHovered) => (
             <YearComparison
               tickets={data?.tickets ?? []}

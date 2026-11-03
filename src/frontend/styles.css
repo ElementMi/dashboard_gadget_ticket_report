@@ -440,9 +440,6 @@ button:disabled {
   width: 56px;
 }
 
-.yc-table td.yc-bigger {
-  font-weight: 700;
-}
 
 .yc-table .yc-change {
   width: 78px;
@@ -557,5 +554,91 @@ button:disabled {
   .yc-split {
     break-before: page;
     break-inside: avoid;
+  }
+}
+
+/* The table of all groups on the right of the bubbles: one column */
+.chart-body {
+  grid-template-columns: minmax(0, 1fr) minmax(400px, 480px);
+  gap: 20px;
+  align-items: start;
+}
+
+.yc-side {
+  min-width: 0;
+}
+
+.yc-side .yc-table {
+  width: 100%;
+  max-width: none;
+  flex: none;
+}
+
+@media (max-width: 960px) {
+  .chart-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media print {
+  /* Page 1: JQL + bubbles. The table of all groups keeps its own page. */
+  .chart-body {
+    display: block;
+  }
+
+  .yc-side {
+    break-before: page;
+    break-inside: avoid;
+  }
+}
+
+/* The group name on its own line: only in the printout */
+.gs-table .gs-group-title {
+  display: none;
+}
+
+@media print {
+  .gs-table .gs-group-title {
+    display: table-row;
+  }
+
+  .gs-table .gs-group-title th {
+    background: #f4f5f7;
+    border-top: 2px solid #dfe1e6;
+    font-weight: 700;
+    text-align: left;
+    padding-bottom: 2px;
+  }
+
+  .gs-table .gs-group th,
+  .gs-table .gs-group td {
+    border-top: none;
+  }
+
+  .screen-only {
+    display: none;
+  }
+
+  /* narrower number columns, so the ticket summary gets more room */
+  .gs-table col.gs-col-status {
+    width: 54px;
+  }
+
+  .gs-table col.gs-col-org {
+    width: 120px;
+  }
+
+  .gs-table col.gs-col-open {
+    width: 64px;
+  }
+
+  .gs-table col.gs-col-total {
+    width: 46px;
+  }
+
+  /* the diagram: a round cloud, as wide as the page allows */
+  .chart-wrap {
+    max-width: 170mm;
+    margin: 0 auto;
   }
 }

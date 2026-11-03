@@ -2,7 +2,7 @@
 // on a widening spiral. Bubble area is proportional to the number of tickets.
 const GAP = 3;
 
-function pack(list, k) {
+function pack(list, k, yFactor) {
   const placed = [];
   list.forEach((item, index) => {
     item.r = Math.max(5, k * Math.sqrt(item.count));
@@ -17,7 +17,7 @@ function pack(list, k) {
       for (let s = 0; s < steps; s += 1) {
         const angle = (s / steps) * 2 * Math.PI + index * 0.7;
         const x = Math.cos(angle) * radius;
-        const y = Math.sin(angle) * radius * 0.62; // flatter than a circle, so the cloud is wide
+        const y = Math.sin(angle) * radius * yFactor; // flatter than a circle, so the cloud is wide
         const free = placed.every((p) => {
           const dx = x - p.x;
           const dy = y - p.y;
@@ -44,15 +44,15 @@ function pack(list, k) {
 }
 
 // groups: [{ label, count, other }] sorted by count, biggest first. Returns the same with cx, cy, r in a width x height box.
-export function layoutBubbles(groups, width = 600, height = 380) {
+export function layoutBubbles(groups, width = 600, height = 380, yFactor = 0.62) {
   const list = groups.map((g) => ({ ...g }));
   if (!list.length) return [];
   const total = list.reduce((sum, g) => sum + g.count, 0);
   let k = Math.sqrt((0.55 * width * height) / (Math.PI * total)) * 1.15;
-  let box = pack(list, k);
+  let box = pack(list, k, yFactor);
   for (let i = 0; i < 60 && (box.x1 - box.x0 > width - 16 || box.y1 - box.y0 > height - 16); i += 1) {
     k *= 0.96;
-    box = pack(list, k);
+    box = pack(list, k, yFactor);
   }
   const tx = width / 2 - (box.x0 + box.x1) / 2;
   const ty = height / 2 - (box.y0 + box.y1) / 2;
