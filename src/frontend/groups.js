@@ -27,13 +27,13 @@ const STOP_WORDS = new Set(
 // Fixed groups. The first rule that matches the title wins; everything else is grouped automatically (below).
 const FIXED_GROUPS = [
   { label: 'Workflow / Camunda', test: /camunda|user\s?task|workflow/i },
-  { label: 'Fehler Kategorie', test: /kategorie\s*1|\bkat\.?\s*1\b/i },
+  { label: 'Fehler / -meldung intern / Kategorie', test: /kategorie\s*1|\bkat\.?\s*1\b/i },
   { label: 'Lager / Kasto', test: /kasto|hochregal|\bhrl\b/i },
   { label: 'Reservierung', blue: true, test: /reservier|reservation/i },
   { label: 'Verladung / Versand', blue: true, test: /verlad|\btour|umtour|ladungsplanung|versandbeleg/i },
   { label: 'Packen / Verpacken', blue: true, test: /packplatz|packzettel|verdicht|umpack|verpack/i },
   { label: 'Kommissionierung', blue: true, test: /\bs(ä|ae)ge/i },
-  { label: 'Schnittstelle / Zabbix', test: /^(?!.*packzettel).*(schnittstelle|übergabe|übertrag|übermittl|rückmeldung|zabbix|interface|handover)/i },
+  { label: 'Schnittstelle / Zabbix / Gevis', test: /^(?!.*packzettel).*(schnittstelle|übergabe|übertrag|übermittl|rückmeldung|zabbix|interface|handover)/i },
   { label: 'Belege / Etiketten / Drucker', test: /etikett|drucker|druck|beleg(e|en)?\b/i },
   { label: 'Hardware / Systemtechnik', test: /\bmde\b|\berp\b|update|wartung|netzwerk|\bnetz\b|vpn|w-?lan|performance|stillstand|verbindung|\bserver|festplatte|system (hängt|funktioniert nicht)/i },
   { label: 'Stammdaten', test: /sachnummernstamm|stammdat|migration|konfig|neue[nrs]?\s+lagerpl/i },
@@ -48,6 +48,33 @@ const FIXED_GROUPS = [
   { label: 'Kommissionierung', blue: true, test: /l[äa]ngen?\b/i },
   { label: 'Auftrag / Disposition / PZ - Nummer', blue: true, test: /\bpz\s*-?\s*\d|\bauftrag|\baufträge|status\s*50|dispo|bedarfsmenge/i },
 ];
+
+// A pastel color of its own for every predefined group (the hue steps by the golden angle, so neighbours never look
+// alike). Groups that are not predefined get no color here: the chart paints them gray.
+const FIXED_LABELS = [...new Set(FIXED_GROUPS.map((rule) => rule.label))];
+export function pastelFor(label) {
+  const index = FIXED_LABELS.indexOf(label);
+  if (index < 0) return null;
+  const hue = Math.round((index * 137.508 + 20) % 360);
+  return `hsl(${hue}, 62%, 80%)`;
+}
+
+// Automatic word groups that are taken into one of the groups above instead of getting a bubble of their own.
+// The key is the first 8 letters of the word (so every spelling of it counts).
+const MERGE_INTO = {
+  kommissi: 'Kommissionierung', // Kommissioniert
+  auftrag: 'Auftrag / Disposition / PZ - Nummer', // Auftrag
+  bestands: 'Lagerbestand', // Bestandsveränderung
+  gevis: 'Schnittstelle / Zabbix / Gevis', // Gevis
+  löschen: 'Datenbereinigung / Removal / Tätigkeiten', // Löschen
+  fehlerme: 'Fehler / -meldung intern / Kategorie', // Fehlermeldung
+  interner: 'Fehler / -meldung intern / Kategorie', // Interner
+  anlegen: 'Stammdaten', // Anlegen
+};
+
+// Words that are not a topic: they never get a bubble. Each of their tickets goes to the group its description points
+// to (when exactly one group matches the description); otherwise it stays in "Other".
+const DISSOLVE = new Set(['angezeig', 'ticket']); // Angezeigt, Ticket
 
 // Words that say nothing about the topic. They are never used as a group name.
 const EMPTY_WORDS = new Set(
@@ -132,12 +159,42 @@ export function groupTickets(tickets) {
       if (!bestStem || bestCount < threshold) break;
 
       usedStems.add(bestStem);
-      const label = capitalise([...forms.get(bestStem).entries()].sort((a, b) => b[1] - a[1])[0][0]);
+      if (DISSOLVE.has(bestStem)) {
+        for (const member of index.get(bestStem)) {
+          if (grouped[member]) continue;
+          const description = (tickets[member].description ?? '').replace(/\[[^\]]*\]/g, ' ');
+          const hits = [...new Set(FIXED_GROUPS.filter((rule) => rule.test.test(description)).map((rule) => rule.label))];
+          if (hits.length !== 1) continue;
+          grouped[member] = true;
+          labelOf[member] = hits[0];
+          let target = groups.find((group) => group.label === hits[0]);
+          if (!target) {
+            target = { label: hits[0], count: 0, other: false, fixed: true, blue: Boolean(FIXED_GROUPS.find((rule) => rule.label === hits[0])?.blue) };
+            groups.push(target);
+          }
+          target.count += 1;
+        }
+        continue;
+      }
+
+      const ownLabel = capitalise([...forms.get(bestStem).entries()].sort((a, b) => b[1] - a[1])[0][0]);
+      const mergeTarget = MERGE_INTO[bestStem];
+      const label = mergeTarget ?? ownLabel;
       for (const member of index.get(bestStem)) {
         if (!grouped[member]) labelOf[member] = label;
         grouped[member] = true;
       }
-      groups.push({ label, count: bestCount, other: false });
+      if (mergeTarget) {
+        // Taken into one of the fixed groups (the group exists already, or is created here).
+        let target = groups.find((group) => group.label === mergeTarget);
+        if (!target) {
+          target = { label: mergeTarget, count: 0, other: false, fixed: true, blue: Boolean(FIXED_GROUPS.find((rule) => rule.label === mergeTarget)?.blue) };
+          groups.push(target);
+        }
+        target.count += bestCount;
+      } else {
+        groups.push({ label, count: bestCount, other: false });
+      }
     }
   }
 

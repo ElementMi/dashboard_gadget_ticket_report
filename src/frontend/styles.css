@@ -331,3 +331,87 @@ button:disabled {
   color: #5e6c84;
   border-top: 1px solid #dfe1e6;
 }
+
+.gs-table .gs-section-row th {
+  background: #dfe1e6;
+  border-top: 2px solid #c1c7d0;
+  text-align: left;
+}
+
+.gs-table .gs-grand-row th,
+.gs-table .gs-grand-row td {
+  background: #dfe1e6;
+  border-top: 2px solid #8993a4;
+  font-weight: 700;
+}
+
+/* Print button and printout (A4 landscape, whole gadget from top to bottom) */
+.print-button {
+  margin-left: 8px;
+}
+
+@page {
+  size: A4 portrait;
+  margin: 10mm;
+}
+
+@media print {
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .no-print,
+  .jql-row button {
+    display: none !important;
+  }
+
+  .shell {
+    padding: 0;
+  }
+
+  .panel {
+    box-shadow: none;
+    break-inside: auto;
+  }
+
+  .queue-wrap,
+  .table-scroll {
+    overflow: visible !important;
+  }
+
+  .gs-table {
+    min-width: 0;
+  }
+
+  .queue-table th {
+    position: static;
+  }
+
+  .gs-table thead {
+    display: table-header-group;
+  }
+
+  .gs-table tfoot {
+    display: table-row-group;
+  }
+
+  .gs-table tr {
+    break-inside: avoid;
+  }
+
+  .chart-body {
+    break-inside: avoid;
+  }
+}
+
+@media print {
+  /* Page 1: JQL + diagram. The Jira ticket table starts on a new page, the YouTrack block on another one. */
+  .print-new-page {
+    break-before: page;
+  }
+
+  .gs-table .gs-section-row {
+    break-before: page;
+  }
+}

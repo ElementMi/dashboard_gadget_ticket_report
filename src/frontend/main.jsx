@@ -2,26 +2,22 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { invoke } from '@forge/bridge';
 import { DEFAULT_JQL, buildSearchJql } from './jql.js';
-import { groupTickets } from './groups.js';
+import { groupTickets, pastelFor } from './groups.js';
 import { layoutBubbles } from './pack.js';
 import TicketQueue from './TicketQueue.jsx';
+import { youtrackProjectsFor } from './youtrackProjects.js';
 
 const CHART_MIN_HEIGHT = 300;
 const CHART_MAX_HEIGHT = 460;
-const HEAT = [179, 38, 30]; // #B3261E
 const OTHER_FILL = '#E3E6ED';
-const FIXED_FILL = '#97A0AF'; // fixed (hard-coded) groups, gray for now
-const BLUE_FILL = '#8AB4E8'; // groups sorted by process step
-const BUILD_STAMP = 'build 03.11. 12:33';
+const AUTOMATIC_FILL = '#97A0AF'; // groups that are not predefined (found automatically), gray
+const BUILD_STAMP = 'build 03.11. 14:17';
 
-// Darker red for more tickets, relative to the biggest group.
-function bubbleStyle(group, max) {
+// Predefined groups: a pastel color of their own. Groups found automatically: gray. "Other": light gray.
+function bubbleStyle(group) {
   if (group.other) return { fill: OTHER_FILL, text: '#172B4D' };
-  if (group.blue) return { fill: BLUE_FILL, text: '#172B4D' };
-  if (group.fixed) return { fill: FIXED_FILL, text: '#172B4D' };
-  const share = 0.18 + 0.82 * Math.pow(group.count / max, 0.8);
-  const rgb = HEAT.map((channel) => Math.round(255 + (channel - 255) * share));
-  return { fill: `rgb(${rgb.join(',')})`, text: share >= 0.62 ? '#FFFFFF' : '#172B4D' };
+  const pastel = group.fixed ? pastelFor(group.label) : null;
+  return { fill: pastel ?? AUTOMATIC_FILL, text: '#172B4D' };
 }
 
 function BubbleChart({ groups }) {
@@ -144,7 +140,31 @@ function App() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState('');
   const [data, setData] = useState(null);
+  const [youtrack, setYoutrack] = useState(null);
+  const [printAll, setPrintAll] = useState(false);
+  const [printHint, setPrintHint] = useState('');
   const hasLoadedOnceRef = useRef(false);
+
+  // For the printout the table shows all its pages at once; afterwards it goes back to 50 per page.
+  useEffect(() => {
+    const done = () => setPrintAll(false);
+    window.addEventListener('afterprint', done);
+    return () => window.removeEventListener('afterprint', done);
+  }, []);
+
+  function handlePrint() {
+    setPrintHint('');
+    setPrintAll(true);
+    // Give the page a moment to draw all rows before the print dialog opens.
+    setTimeout(() => {
+      try {
+        window.print();
+      } catch (e) {
+        setPrintAll(false);
+        setPrintHint('Printing is blocked here. Open the gadget in full screen and press Ctrl+P.');
+      }
+    }, 300);
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -162,6 +182,17 @@ function App() {
 
         if (!mounted) return;
         setData({ total, tickets, groups: groupTickets(tickets) });
+
+        // The YouTrack tickets of the same organization load on their own: if YouTrack is slow or not connected,
+        // the Jira part above is not affected.
+        const youtrackProjects = youtrackProjectsFor(tickets);
+        if (youtrackProjects.length) {
+          invoke('loadYoutrackReport', { projects: youtrackProjects })
+            .then((result) => mounted && setYoutrack(result))
+            .catch(() => mounted && setYoutrack({ available: false, reason: 'error' }));
+        } else {
+          setYoutrack(null);
+        }
       } catch (e) {
         if (!mounted) return;
         setError(e?.message ?? 'Unexpected error while loading gadget data.');
@@ -217,15 +248,21 @@ function App() {
           </div>
         </div>
 
-        <div className="small">Tickets found: {data?.total ?? 0} · {BUILD_STAMP}</div>
+        <div className="small">
+          Tickets found: {data?.total ?? 0} · {BUILD_STAMP}{' '}
+          <button className="no-print print-button" onClick={handlePrint}>
+            Print
+          </button>
+          {printHint ? <span className="no-print"> {printHint}</span> : null}
+        </div>
       </div>
 
       <div className="panel">
         <BubbleChart groups={data?.groups ?? []} />
       </div>
 
-      <div className="panel">
-        <TicketQueue tickets={data?.tickets ?? []} groups={data?.groups ?? []} />
+      <div className="panel print-new-page">
+        <TicketQueue tickets={data?.tickets ?? []} groups={data?.groups ?? []} youtrack={youtrack} printAll={printAll} />
       </div>
     </div>
   );

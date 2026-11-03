@@ -11,9 +11,112 @@ function formatOpenFor(created) {
   return wholeDays > 0 ? `${wholeDays}d ${hours}h` : `${hours}h`;
 }
 
+// The YouTrack tickets of the organization, below the totals: one row per YouTrack project with the status counts
+// and the open tickets under it, in the same columns as the Jira groups above.
+function SumRow({ label, counts, total, className }) {
+  return (
+    <tr className={className}>
+      <th>{label}</th>
+      {counts.map((count, index) => (
+        <td key={STATUS_COLUMNS[index]} className="gs-num">
+          {count}
+        </td>
+      ))}
+      <td />
+      <td />
+      <td className="gs-num">{total}</td>
+    </tr>
+  );
+}
+
+function YoutrackRows({ youtrack, jiraAll }) {
+  if (!youtrack) return null;
+  const span = STATUS_COLUMNS.length + 4;
+
+  if (!youtrack.available) {
+    return (
+      <tr className="gs-rest-row">
+        <td colSpan={span}>YouTrack tickets are not available ({youtrack.reason ?? 'not connected'}).</td>
+      </tr>
+    );
+  }
+
+  // Sum over all YouTrack projects shown here.
+  const youtrackAll = { counts: STATUS_COLUMNS.map(() => 0), total: 0 };
+  for (const project of youtrack.projects) {
+    project.counts.forEach((count, index) => (youtrackAll.counts[index] += count));
+    youtrackAll.total += project.total;
+  }
+
+  return (
+    <>
+      <tr className="gs-section-row">
+        <th colSpan={span}>YouTrack</th>
+      </tr>
+      {youtrack.projects.map((project) => {
+        const open = [...project.open].sort(
+          (a, b) => a.column - b.column || (ageInDays(b.created) ?? 0) - (ageInDays(a.created) ?? 0)
+        );
+        return (
+          <React.Fragment key={project.project}>
+            <tr className="gs-group">
+              <th>
+                {project.project} - {project.name}
+              </th>
+              {project.counts.map((count, index) => (
+                <td key={STATUS_COLUMNS[index]} className="gs-num">
+                  {count}
+                </td>
+              ))}
+              <td />
+              <td />
+              <td className="gs-num">{project.total}</td>
+            </tr>
+            {open.map((ticket) => (
+              <tr key={ticket.key} className="gs-detail">
+                <td>
+                  <div className="gs-key-grid">
+                    <span>
+                      <a
+                        href={`${youtrack.baseUrl}/issue/${ticket.key}`}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          router.open(`${youtrack.baseUrl}/issue/${ticket.key}`);
+                        }}
+                      >
+                        {ticket.key}
+                      </a>
+                    </span>
+                    <span>{project.project}</span>
+                    <span>{ticket.assignee}</span>
+                    <span>{ticket.summary}</span>
+                  </div>
+                </td>
+                <td colSpan={STATUS_COLUMNS.length} />
+                <td>{project.name}</td>
+                <td>{formatOpenFor(ticket.created)}</td>
+                <td />
+              </tr>
+            ))}
+          </React.Fragment>
+        );
+      })}
+      <SumRow label="All YouTrack tickets" counts={youtrackAll.counts} total={youtrackAll.total} className="gs-total-row" />
+      {jiraAll ? (
+        <SumRow
+          label="All tickets (Jira + YouTrack)"
+          counts={jiraAll.counts.map((count, index) => count + youtrackAll.counts[index])}
+          total={jiraAll.total + youtrackAll.total}
+          className="gs-grand-row"
+        />
+      ) : null}
+    </>
+  );
+}
+
 // Column order of the table: Group (and, in the ticket rows, Key / Project / Assignee / Summary), the five status
 // columns, Organization, Open for, Total. The columns have fixed widths so group rows and ticket rows line up.
-export default function TicketQueue({ tickets, groups }) {
+export default function TicketQueue({ tickets, groups, youtrack, printAll = false }) {
   const [page, setPage] = useState(1);
   const report = useMemo(() => buildReport(tickets, groups), [tickets, groups]);
   const pages = useMemo(() => paginate(report.rows, PAGE_SIZE), [report]);
@@ -24,7 +127,8 @@ export default function TicketQueue({ tickets, groups }) {
 
   const totalPages = Math.max(1, pages.length);
   const safePage = Math.min(page, totalPages);
-  const blocks = pages[safePage - 1] ?? [];
+  // For the printout all pages are shown at once.
+  const blocks = printAll ? pages.flat() : pages[safePage - 1] ?? [];
 
   const before = pages.slice(0, safePage - 1).reduce((sum, p) => sum + p.reduce((s, b) => s + b.items.length, 0), 0);
   const onPage = blocks.reduce((sum, block) => sum + block.items.length, 0);
@@ -35,7 +139,7 @@ export default function TicketQueue({ tickets, groups }) {
   return (
     <>
       <div className="section-heading">Open tickets by group and status</div>
-      <div className="queue-pager-row">
+      <div className="queue-pager-row no-print">
         <div className="small">
           Showing {onPage ? before + 1 : 0}-{before + onPage} of {report.totals.open} open tickets in {report.rows.length} groups
         </div>
@@ -144,8 +248,10 @@ export default function TicketQueue({ tickets, groups }) {
               </tr>
             )}
           </tbody>
-          {report.rows.length ? (
+          {report.rows.length || youtrack ? (
             <tfoot>
+              {report.rows.length ? (
+                <>
               <tr className="gs-total-row">
                 <th>Total (listed groups)</th>
                 {report.totals.counts.map((count, index) => (
@@ -179,6 +285,9 @@ export default function TicketQueue({ tickets, groups }) {
                 <td />
                 <td className="gs-num">{report.all.total}</td>
               </tr>
+                </>
+              ) : null}
+              {safePage === totalPages || printAll ? <YoutrackRows youtrack={youtrack} jiraAll={report.all} /> : null}
             </tfoot>
           ) : null}
         </table>

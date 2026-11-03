@@ -17,6 +17,10 @@ resources:
 permissions:
   scopes:
     - read:jira-work
+  external:
+    fetch:
+      backend:
+        - address: sup-logistik.myjetbrains.com
 app:
   runtime:
     name: nodejs22.x

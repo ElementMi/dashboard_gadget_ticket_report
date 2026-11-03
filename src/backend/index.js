@@ -1,5 +1,5 @@
 import Resolver from '@forge/resolver';
-import api, { route } from '@forge/api';
+import api, { route, fetch as externalFetch } from '@forge/api';
 
 const resolver = new Resolver();
 
@@ -99,6 +99,80 @@ function descriptionExcerpt(description) {
     .trim()
     .slice(0, 300);
 }
+
+// ---- YouTrack (read-only): the tickets of the YouTrack projects of an organization -------------------------------
+const YOUTRACK_BASE = 'https://sup-logistik.myjetbrains.com/youtrack';
+const REPORT_COLUMNS = ['New / open', 'In progress', 'Waiting for customer', 'Change request', 'Solved / closed'];
+// YouTrack state -> column of the report. Everything unresolved that is not listed here counts as New / open.
+const YOUTRACK_STATE_COLUMN = { 'in progress': 'In progress', 'to verify': 'Waiting for customer' };
+
+function youtrackColumn(resolved, stateName) {
+  if (resolved) return 'Solved / closed';
+  return YOUTRACK_STATE_COLUMN[(stateName ?? '').toLowerCase()] ?? 'New / open';
+}
+
+function customFieldValue(issue, fieldName) {
+  const field = (issue.customFields ?? []).find((candidate) => candidate.name === fieldName);
+  const value = field?.value;
+  return Array.isArray(value) ? value[0]?.fullName ?? value[0]?.name ?? '' : value?.fullName ?? value?.name ?? '';
+}
+
+resolver.define('loadYoutrackReport', async ({ payload }) => {
+  const token = process.env.YOUTRACK_TOKEN;
+  if (!token) return { available: false, reason: 'no token' };
+
+  const projects = (payload?.projects ?? []).filter((name) => /^[A-Za-z0-9_]{1,12}$/.test(name));
+  if (!projects.length) return { available: false, reason: 'no projects' };
+
+  const issues = [];
+  for (let skip = 0; skip < 5000; skip += 100) {
+    const url = new URL(`${YOUTRACK_BASE}/api/issues`);
+    url.searchParams.set('query', `project: ${projects.join(', ')}`);
+    url.searchParams.set(
+      'fields',
+      'idReadable,summary,created,resolved,project(shortName,name),customFields(name,value(name,fullName))'
+    );
+    url.searchParams.set('$top', '100');
+    url.searchParams.set('$skip', String(skip));
+    const response = await externalFetch(url.toString(), {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    });
+    if (!response.ok) return { available: false, reason: `YouTrack answered ${response.status}` };
+    const page = await response.json();
+    issues.push(...page);
+    if (page.length < 100) break;
+  }
+
+  const byProject = new Map();
+  for (const issue of issues) {
+    const shortName = issue.project?.shortName ?? '-';
+    if (!byProject.has(shortName)) {
+      byProject.set(shortName, {
+        project: shortName,
+        name: issue.project?.name ?? shortName,
+        counts: REPORT_COLUMNS.map(() => 0),
+        total: 0,
+        open: [],
+      });
+    }
+    const row = byProject.get(shortName);
+    const state = customFieldValue(issue, 'State');
+    const column = youtrackColumn(Boolean(issue.resolved), state);
+    row.counts[REPORT_COLUMNS.indexOf(column)] += 1;
+    row.total += 1;
+    if (!issue.resolved) {
+      row.open.push({
+        key: issue.idReadable,
+        summary: issue.summary ?? '',
+        created: issue.created ? new Date(issue.created).toISOString() : null,
+        state,
+        column: REPORT_COLUMNS.indexOf(column),
+        assignee: customFieldValue(issue, 'Assignee') || 'Unassigned',
+      });
+    }
+  }
+  return { available: true, baseUrl: YOUTRACK_BASE, projects: [...byProject.values()] };
+});
 
 resolver.define('loadReportData', async ({ payload }) => {
   const searchJql = payload?.searchJql;
